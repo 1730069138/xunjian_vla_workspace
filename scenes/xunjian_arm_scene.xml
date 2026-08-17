@@ -1,0 +1,120 @@
+<mujoco model="xunjian_arm_scene">
+  <include file="../models/xunjian_arm.xml"/>
+
+  <option timestep="0.001" integrator="RK4" gravity="0 0 -9.81" />
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <global azimuth="140" elevation="-30"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.1 0.2 0.3" rgb2="0.2 0.3 0.4" width="300" height="300" mark="edge" markrgb="0.2 0.3 0.4"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true"/>
+
+    <texture name="tex_table_0" type="2d" file="../assets/textures/0.png"/>
+    <texture name="tex_table_1" type="2d" file="../assets/textures/1.png"/>
+    <texture name="tex_table_2" type="2d" file="../assets/textures/2.png"/>
+    <texture name="tex_table_3" type="2d" file="../assets/textures/3.png"/>
+    <texture name="tex_table_4" type="2d" file="../assets/textures/4.png"/>
+    <texture name="tex_table_5" type="2d" file="../assets/textures/5.png"/>
+    <texture name="tex_table_6" type="2d" file="../assets/textures/6.png"/>
+    <texture name="tex_table_7" type="2d" file="../assets/textures/7.png"/>
+    <texture name="tex_table_8" type="2d" file="../assets/textures/8.png"/>
+    <texture name="tex_table_9" type="2d" file="../assets/textures/9.png"/>
+    <texture name="tex_table_10" type="2d" file="../assets/textures/10.png"/>
+
+    <material name="mat_table_0" texture="tex_table_0" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_1" texture="tex_table_1" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_2" texture="tex_table_2" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_3" texture="tex_table_3" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_4" texture="tex_table_4" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_5" texture="tex_table_5" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_6" texture="tex_table_6" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_7" texture="tex_table_7" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_8" texture="tex_table_8" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_9" texture="tex_table_9" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_10" texture="tex_table_10" specular="0.2" shininess="0.1"/>
+
+    <mesh name="flat_screwdriver_mesh" file="../objects/flat_screwdriver/textured.obj" />
+    <texture name="flat_screwdriver_tex" type="2d" file="../assets/objects/flat_screwdriver/texture_map.png"/>
+    <material name="flat_screwdriver_mat" texture="flat_screwdriver_tex" specular="1" shininess="0.3" reflectance="0.0" rgba="1.0 1.0 1.0 1" />
+    <mesh name="flat_screwdriver_coacd_0" file="../objects/flat_screwdriver/textured_coacd_0.stl" />
+    <mesh name="flat_screwdriver_coacd_1" file="../objects/flat_screwdriver/textured_coacd_1.stl" />
+    <mesh name="flat_screwdriver_coacd_2" file="../objects/flat_screwdriver/textured_coacd_2.stl" />
+    <mesh name="flat_screwdriver_coacd_3" file="../objects/flat_screwdriver/textured_coacd_3.stl" />
+  </asset>
+
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 .25" material="grid" condim="3"/>
+    
+    <light directional="true" diffuse="0.6 0.6 0.6" specular="0.2 0.2 0.2" pos="0 0 4" dir="0 0 -1" castshadow="true"/>
+    <light directional="true" diffuse="0.3 0.3 0.3" specular="0 0 0" pos="0 0 4" dir="1 1 -1" castshadow="false"/>
+
+    <body name="table" pos="0.60 0 0">
+        <geom name="table_top" type="box" pos="0 0 0.712" size="0.3 0.6 0.02" material="mat_table_1" friction="1 0.05 0.0001" condim="3"/>
+        
+        <!-- 🌟 1. 绿色区域居中 (Y=0) -->
+        <geom name="zone_target" type="box" pos="-0.15 0 0.733" size="0.15 0.125 0.001" rgba="0 1 0 0.3" contype="0" conaffinity="0" group="2"/>
+        <!-- 🌟 2. 红色区域贴着蓝色区域 (Y=0.225) -->
+        <geom name="zone_obstacle" type="box" pos="-0.15 0.225 0.733" size="0.15 0.05 0.001" rgba="1 0 0 0.3" contype="0" conaffinity="0" group="2"/>
+        <!-- 🌟 3. 蓝色区域 (Y=0.40) -->
+        <geom name="zone_storage" type="box" pos="-0.15 0.40 0.733" size="0.15 0.125 0.001" rgba="0 0 1 0.3" contype="0" conaffinity="0" group="2"/>
+
+        <!-- 桌腿部分保持不变... -->
+        <geom name="leg1" type="cylinder" pos="0.25 0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+        <geom name="leg2" type="cylinder" pos="0.25 -0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+        <geom name="leg3" type="cylinder" pos="-0.25 0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+        <geom name="leg4" type="cylinder" pos="-0.25 -0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+    </body>
+
+    <!-- 🌟 4. 同步将收纳箱的 Y 坐标移到 0.40，与蓝色区域对齐 -->
+    <body name="plasticbox" pos="0.35 0.40 0.732">
+        <freejoint name="plasticbox_joint"/>
+        <geom type="box" size="0.10 0.15 0.005" pos="0 0 0.005" rgba="0.5 0.35 0.25 1" friction="1.5 0.1 0.0001" condim="4"/>
+        <geom type="box" size="0.10 0.002 0.03" pos="0 0.148 0.03" rgba="0.5 0.35 0.25 1" friction="1.5 0.1 0.0001" condim="4"/>
+        <geom type="box" size="0.10 0.002 0.03" pos="0 -0.148 0.03" rgba="0.5 0.35 0.25 1" friction="1.5 0.1 0.0001" condim="4"/>
+        <geom type="box" size="0.002 0.15 0.03" pos="0.098 0 0.03" rgba="0.5 0.35 0.25 1" friction="1.5 0.1 0.0001" condim="4"/>
+        <geom type="box" size="0.002 0.15 0.03" pos="-0.098 0 0.03" rgba="0.5 0.35 0.25 1" friction="1.5 0.1 0.0001" condim="4"/>
+    </body>
+
+    <!-- 🌟 螺丝刀绕世界 Z 轴（平行于桌面）旋转 90°：quat = (cos45, 0, 0, sin45) -->
+    <body name="real_screwdriver" pos="0.40 -0.0 0.8" quat="0.7071068 0 0 0.7071068">
+        <freejoint name="fj_screwdriver"/>
+        <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001" />
+        <geom type="mesh" mesh="flat_screwdriver_mesh" material="flat_screwdriver_mat" contype="0" conaffinity="0"/>
+        <geom type="mesh" mesh="flat_screwdriver_coacd_0" group="3" rgba="1 0 0 0" condim="4" friction="2.0 0.5 0.001" />
+        <geom type="mesh" mesh="flat_screwdriver_coacd_1" group="3" rgba="1 0 0 0" condim="4" friction="2.0 0.5 0.001" />
+        <geom type="mesh" mesh="flat_screwdriver_coacd_2" group="3" rgba="1 0 0 0" condim="4" friction="2.0 0.5 0.001" />
+        <geom type="mesh" mesh="flat_screwdriver_coacd_3" group="3" rgba="1 0 0 0" condim="4" friction="2.0 0.5 0.001" />
+        
+        <geom name="screw_axis_x" type="cylinder" size="0.002 0.04" pos="0.04 0 0" quat="0.7071068 0 0.7071068 0" rgba="1 0 0 0.8" contype="0" conaffinity="0" group="1"/>
+        <geom name="screw_axis_y" type="cylinder" size="0.002 0.04" pos="0 0.04 0" quat="0.7071068 -0.7071068 0 0" rgba="0 1 0 0.8" contype="0" conaffinity="0" group="1"/>
+        <geom name="screw_axis_z" type="cylinder" size="0.002 0.04" pos="0 0 0.04" quat="1 0 0 0" rgba="0 0 1 0.8" contype="0" conaffinity="0" group="1"/>
+    </body>
+    
+    <body name="sponge" pos="0.45 -0.30 0.8">
+        <freejoint name="sponge_joint"/>
+        <geom name="sponge_geom" type="box" size="0.02 0.02 0.02" rgba="0.8 0.8 0.2 1" mass="0.05" friction="1.5 0.05 0.0001" condim="4"/>
+        
+        <geom name="sponge_axis_x" type="cylinder" size="0.002 0.04" pos="0.04 0 0" quat="0.7071068 0 0.7071068 0" rgba="1 0 0 0.8" contype="0" conaffinity="0" group="1"/>
+        <geom name="sponge_axis_y" type="cylinder" size="0.002 0.04" pos="0 0.04 0" quat="0.7071068 -0.7071068 0 0" rgba="0 1 0 0.8" contype="0" conaffinity="0" group="1"/>
+        <geom name="sponge_axis_z" type="cylinder" size="0.002 0.04" pos="0 0 0.04" quat="1 0 0 0" rgba="0 0 1 0.8" contype="0" conaffinity="0" group="1"/>
+    </body>
+    <!-- <body name="dynamic_pillar" pos="0.45 0.225 0.82">
+        <freejoint name="pillar_joint"/>
+        <geom name="pillar_geom" type="box" size="0.02 0.02 0.08" rgba="0.5 0.5 0.5 1" mass="0.2" friction="1 0.05 0.0001"/>
+    </body> -->
+    <body name="cam_lookat_target" pos="0.45 0.0 0.735">
+        <site name="focus_point" type="sphere" size="0.02" rgba="1 1 0 1"/> 
+    </body>
+
+    <body name="global_cam_body" pos="-0.1 0 1.4">
+        <site name="lens_point" type="sphere" size="0.03" rgba="1 0 0 1"/>
+        
+        <camera name="global_cam" mode="targetbody" target="cam_lookat_target" fovy="55"/>
+    </body>
+
+  </worldbody>
+</mujoco>

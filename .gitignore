@@ -1,0 +1,65 @@
+# ==============================================================================
+# xunjian_vla_workspace
+# ==============================================================================
+
+# ---- 采集产出与实验结果（体积大、可复现，不入库）----
+datasets/
+recordings/
+checkpoints/
+outputs/
+logs/
+wandb/
+*.mp4
+*.avi
+*.npz
+*.xlsx
+
+# 如果想保留一条示例轨迹方便别人对照格式，取消下面两行的注释
+# !datasets/screwdriver_cleanup/ep_0/
+# !datasets/screwdriver_cleanup/ep_0/**
+
+# ---- LeRobot / HuggingFace 缓存 ----
+.cache/
+lerobot_data/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+
+# 虚拟环境
+.venv/
+venv/
+env/
+.conda/
+
+# 工具缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ---- MuJoCo / 渲染临时文件 ----
+MUJOCO_LOG.TXT
+*.mjb
+
+# ---- 编辑器与系统 ----
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# ---- 密钥与本地配置 ----
+.env
+.env.local
+*.pem
+secrets.json

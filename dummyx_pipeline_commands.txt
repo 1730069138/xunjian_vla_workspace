@@ -1,0 +1,127 @@
+仿真全流程（采集 → 转换 → 传输 → 归一化 → 训练 → 推理）
+
+================================================================
+1. 创建环境（采集机，一次性）
+================================================================
+# 1. 创建并激活 conda 环境（必须 3.11，与 openpi 一致）
+conda create -n dummyx python=3.11 -y
+conda activate dummyx
+
+# 2. av 的 PyPI wheel 已被撤，先用 conda-forge 装
+conda install -y -c conda-forge "ffmpeg<8" "av=14.4.0"
+
+# 3. 基础依赖（版本对齐 openpi 的 uv 环境）
+pip install numpy==1.26.4 opencv-python==4.11.0.86 mujoco==2.3.7 tqdm==4.67.1 tyro==0.9.22 \
+            torch==2.7.1 torchvision==0.22.1 torchcodec==0.4.0 datasets==3.6.0 \
+            huggingface-hub==0.32.3 pyarrow==20.0.0 pandas==2.2.3 transformers==4.53.2 \
+            diffusers==0.33.1 einops==0.8.1 gymnasium==0.29.1 jsonlines==4.0.0 numba==0.61.2 \
+            omegaconf==2.3.0 draccus==0.10.0 deepdiff==8.5.0 zarr==3.0.8 rerun-sdk==0.23.1 \
+            termcolor==3.1.0 wandb==0.19.11 imageio==2.37.0 imageio-ffmpeg==0.6.0 \
+            pillow==11.2.1 safetensors==0.5.3 scipy==1.15.3 websockets==15.0.1 msgpack==1.1.0
+
+# 4. lerobot 必须用 openpi 钉死的 commit，且 --no-deps（否则顶掉上面的 pin）
+#    绝不能 pip install lerobot，PyPI 上是 v0.5+ 的 v3.0 格式，openpi 读不了
+git clone https://github.com/huggingface/lerobot.git ~/lerobot
+cd ~/lerobot && git checkout 0cf864870cf29f4738d3ade893e6fd13fbd7cdb5
+pip install --no-deps -e .
+
+# 5. 部署脚本用的 openpi_client
+pip install -e ~/VLA/openpi/packages/openpi-client
+
+# 6. 环境变量：只设 HF_LEROBOT_HOME
+#    该 commit 只要检测到 LEROBOT_HOME 存在就直接 raise ValueError
+echo 'export HF_LEROBOT_HOME=$HOME/.cache/huggingface/lerobot' >> ~/.bashrc
+sed -i '/export LEROBOT_HOME=/d' ~/.bashrc
+source ~/.bashrc
+
+
+================================================================
+2. 收集数据集
+================================================================
+conda activate dummyx
+cd ~/xunjian_vla_workspace/scripts
+python3 auto_grasp_screwdriver2.py --target 150
+
+# --target 是总数不是新增数，中断后重跑同一条命令即可续采（会补空缺编号）
+# 无窗口加 --headless
+
+
+================================================================
+3. 转换数据集
+================================================================
+conda activate dummyx
+cd ~/xunjian_vla_workspace/scripts
+python3 convert_xunjiandummyx_to_lerobot.py \
+    --data_dir ../datasets/screwdriver_cleanup \
+    --repo_id local/dummyx_screwdriver
+
+# 脚本会先 rmtree 掉旧目录，是全量重建
+# 检查：state/action 应为 [8]，两相机 [256,256,3]，fps=50
+python3 -c "
+import json,pathlib
+d=json.load(open(pathlib.Path.home()/'.cache/huggingface/lerobot/local/dummyx_screwdriver/meta/info.json'))
+print(d['codebase_version'], d['fps'], d.get('total_frames'), d.get('total_episodes'))
+print({k:d['features'][k].get('shape') for k in d['features']})"
+
+
+================================================================
+4. 打包传到训练机
+================================================================
+# 压缩的就是 repo_id 那一整个目录，meta/ data/ images/ 都要，local/ 这层不能丢
+tar -czf ~/ds.tar.gz -C ~/.cache/huggingface/lerobot local/dummyx_screwdriver
+sha256sum ~/ds.tar.gz | tee ~/ds.sha256
+scp ~/ds.tar.gz ~/ds.sha256 <user>@<训练机>:~/
+
+# 训练机上解到同样的位置
+sha256sum -c ~/ds.sha256
+tar -xf ~/ds.tar.gz -C ~/.cache/huggingface/lerobot
+echo "LEROBOT_HOME=[$LEROBOT_HOME]"     # 这台机器上也必须为空
+
+
+================================================================
+5. 归一化（训练机，openpi 官方 uv 环境）
+================================================================
+cd ~/VLA/openpi
+确认 config.py 1126 行左右是 repo_id="local/dummyx_screwdriver"
+
+HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 uv run scripts/compute_norm_stats.py --config-name pi0_dummyx_lora
+
+# 数据集换了就必须重算，重算后必须重新训练。混用会导致动作幅度整体错位。
+
+
+================================================================
+6. 训练
+================================================================
+cd ~/VLA/openpi
+WANDB_MODE=offline CUDA_VISIBLE_DEVICES=2,3 NCCL_P2P_DISABLE=1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 \
+uv run scripts/train.py pi0_dummyx_lora --exp-name dummyx_lora_run<日期>
+
+# 续训：去掉 --overwrite，加 --resume
+
+
+================================================================
+7. 起 policy server
+================================================================
+cd ~/VLA/openpi
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.90 CUDA_VISIBLE_DEVICES=1 \
+uv run scripts/serve_policy.py policy:checkpoint \
+    --policy.config pi0_dummyx_lora \
+    --policy.dir checkpoints/pi0_dummyx_lora/dummyx_lora_run0812/30000
+
+# 端口 8000。跨机推理开隧道：ssh -N -L 8000:localhost:8000 <user>@<训练机>
+# 旧的 0405 版 checkpoint 要推理的话，需把 config 1126 行的
+# dummyx_screwdriver 改回 dummyx_grasp（它的 assets 里是 grasp 的 norm_stats）
+
+
+================================================================
+8. 推理（采集机）
+================================================================
+conda activate dummyx
+cd ~/xunjian_vla_workspace
+
+# 先开环回放自检：拿训练集真实帧喂 server，能分清是模型问题还是部署端问题
+python3 scripts/test_policy_replay.py --host <训练机ip> --port 8000 --ep datasets/screwdriver_cleanup/ep_0
+
+# 正式推理 / 消融
+python3 scripts/deploy_screwdriver_client2.py --host <训练机ip> --port 8000
+# 断点续跑靠 recordings/<run_folder>/progress.json，重头跑加 --fresh

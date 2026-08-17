@@ -1,0 +1,240 @@
+================================================================================
+dummyx 采集 / 转换 / 部署 —— conda 环境重建完整流程（已验证跑通）
+--------------------------------------------------------------------------------
+目标：在新电脑上建一个 conda 环境，运行
+      auto_grasp_screwdriver2.py       （MuJoCo 数据采集）
+      convert_xunjiandummyx_to_lerobot.py （转 LeRobot 格式）
+      deploy_screwdriver_client2.py    （连 policy server 推理）
+约束：转换产物必须能被现有的 openpi uv 环境读取，否则 compute_norm_stats 出错。
+      openpi 端不重建，继续用原来的 uv 虚拟环境。
+================================================================================
+
+
+【核心原则】
+--------------------------------------------------------------------------------
+1) 决定数据集落盘格式的只有这几个包，必须和 openpi venv 逐字对齐：
+      lerobot(git commit) / numpy / pyarrow / datasets / huggingface-hub
+   其余传递依赖（requests、urllib3、cffi、beautifulsoup4 等）版本漂移无所谓。
+
+2) mujoco 必须钉 2.3.7，理由不是格式而是物理。2.3 与 3.x 的默认接触求解参数
+   不同，同一份 XML 换版本后动力学会漂移，训练集与推理环境将不可比。
+
+3) 绝不 pip install lerobot（PyPI 上已是 v0.5+/Python3.12/数据集 v3.0 格式）。
+   只能 git checkout openpi 钉死的那个 commit。
+
+
+【第 0 步：从旧环境取版本真值】
+--------------------------------------------------------------------------------
+cd ~/VLA/openpi
+grep -n "lerobot\|dlimp\|requires-python" pyproject.toml
+uv pip freeze > openpi_freeze.txt
+
+本次实测结果（openpi/.venv, Python 3.11）：
+  lerobot @ git+https://github.com/huggingface/lerobot@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5
+  numpy==1.26.4            opencv-python==4.11.0.86
+  mujoco==2.3.7            torch==2.7.1 / torchvision==0.22.1 / torchcodec==0.4.0
+  av==14.4.0               datasets==3.6.0
+  pyarrow==20.0.0          huggingface-hub==0.32.3
+  transformers==4.53.2     tyro==0.9.22 / tqdm==4.67.1
+  websockets==15.0.1       jax==0.5.3
+
+
+【第 1 步：创建环境】
+--------------------------------------------------------------------------------
+conda create -n dummyx python=3.11 -y
+conda activate dummyx
+
+
+【第 2 步：先用 conda-forge 解决 av / ffmpeg】
+--------------------------------------------------------------------------------
+conda install -y -c conda-forge "ffmpeg<8" "av=14.4.0"
+
+原因：PyAV 官方已把 14.4.0 的预编译 wheel 从 PyPI 撤下，pip 只能源码编译且
+需要 FFmpeg 7，几乎必然失败。先用 conda 装好，后面 pip 会认为已满足。
+
+
+【第 3 步：装主体依赖】
+--------------------------------------------------------------------------------
+pip install -r requirements-dummyx.txt
+
+（requirements-dummyx.txt 内容见本流程末尾附录）
+
+
+【第 4 步：装 lerobot —— 必须 --no-deps】
+--------------------------------------------------------------------------------
+GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/huggingface/lerobot.git ~/lerobot
+cd ~/lerobot
+git checkout 0cf864870cf29f4738d3ade893e6fd13fbd7cdb5
+pip install --no-deps -e .
+
+--no-deps 是为了防止 lerobot 的宽松约束把上一步钉好的 numpy / pyarrow 顶掉。
+GIT_LFS_SKIP_SMUDGE=1 防止拉取仓库里的大 LFS 文件。
+
+
+【第 5 步：装 openpi_client（部署脚本用）】
+--------------------------------------------------------------------------------
+pip install -e ~/VLA/openpi/packages/openpi-client
+
+只是个轻量 websocket 客户端，不会引入 jax/torch。
+
+
+【第 6 步：环境变量 —— 这里有个必踩的坑】
+--------------------------------------------------------------------------------
+只设 HF_LEROBOT_HOME，绝对不要设 LEROBOT_HOME：
+
+  echo 'export HF_LEROBOT_HOME=$HOME/.cache/huggingface/lerobot' >> ~/.bashrc
+  source ~/.bashrc
+
+原因：这个 lerobot commit 在 lerobot/common/constants.py 里对 LEROBOT_HOME 做了
+硬拦截——只要该变量存在就直接
+    ValueError: 'LEROBOT_HOME' is deprecated, please use 'HF_LEROBOT_HOME'
+不管它的值对不对。若之前误设过：
+
+  sed -i '/export LEROBOT_HOME=/d' ~/.bashrc
+  unset LEROBOT_HOME
+  echo "LEROBOT_HOME=[$LEROBOT_HOME] HF_LEROBOT_HOME=[$HF_LEROBOT_HOME]"
+  # 期望：第一个为空，第二个是 /home/<user>/.cache/huggingface/lerobot
+
+配套建议：把 convert_xunjiandummyx_to_lerobot.py 第 21 行改成读新变量名，
+否则脚本和 lerobot 是靠"默认值恰好相同"才对上的，换盘就会分头写两个目录：
+
+  HF_LEROBOT_HOME = Path(
+      os.getenv("HF_LEROBOT_HOME", "~/.cache/huggingface/lerobot")
+  ).expanduser()
+
+
+【第 7 步：补 pip check 的红字（可选）】
+--------------------------------------------------------------------------------
+pip install cmake==4.0.2 gdown==5.2.0 h5py==3.13.0 pymunk==7.0.0 pyzmq==26.4.0
+
+这五个都不在采集/转换/部署路径上（h5py 是 ALOHA hdf5、pymunk 是 PushT 环境、
+gdown 拉 Google Drive、pyzmq 是真机遥操作、cmake 是可选扩展构建期依赖），
+装它们纯粹是为了让 pip check 干净，方便以后排查真问题。
+
+*** opencv-python-headless 故意不装 ***
+它和 opencv-python 提供同一个 cv2/ 包目录，后装的会覆盖先装的，且捆绑的
+FFmpeg 会与 conda-forge 那套打架。所以 pip check / pip install 结尾永远会剩
+一行 headless 的抱怨，那是预期内的，不是错误。
+
+
+【第 8 步：验收（三级）】
+--------------------------------------------------------------------------------
+# 8.1 版本自检 —— 必须与旧机逐字一致
+python -c "import lerobot,numpy,cv2,mujoco,openpi_client;print(lerobot.__file__,numpy.__version__,cv2.__version__,mujoco.__version__)"
+# 期望：.../lerobot/__init__.py 1.26.4 4.11.0 2.3.7
+# 注意 traceback/路径里应出现 lerobot/common/... —— 该 commit 是旧布局，
+# 转换脚本的 try 分支 (lerobot.common.datasets) 直接命中，except 分支用不上。
+
+cd ~/lerobot && git rev-parse HEAD   # 核对 commit
+
+# 8.2 小批量转换（3 条 ep），比对元数据结构
+mkdir -p <project>/datasets/_smoke
+cp -r <project>/datasets/screwdriver_cleanup/ep_{0,1,2} <project>/datasets/_smoke/
+python convert_xunjiandummyx_to_lerobot.py --data_dir datasets/_smoke --repo_id local/dummyx_smoke
+
+python -c "
+import json,pathlib
+p=pathlib.Path.home()/'.cache/huggingface/lerobot/local/dummyx_smoke/meta/info.json'
+d=json.load(open(p))
+print('codebase_version:',d['codebase_version'])
+print('fps:',d['fps'],'robot_type:',d['robot_type'])
+print({k:d['features'][k].get('shape') for k in d['features']})
+"
+ls ~/.cache/huggingface/lerobot/local/dummyx_smoke/meta/
+
+# 判据：codebase_version 与旧机一致；state/action 均为 [8]；两相机 [256,256,3]；
+#       meta/ 下文件清单相同（尤其 tasks 文件在不在）。
+
+# 8.3 终极验收 —— 回 openpi 的 uv 环境算归一化
+cd ~/VLA/openpi
+uv run scripts/compute_norm_stats.py --config-name pi0_dummyx_lora
+# 对照旧的 norm_stats：8 维 mean/std，夹爪 dim6/dim7 严格反号、mean 约 +0.0116
+
+
+【踩坑速查】
+--------------------------------------------------------------------------------
+现象                                        原因 / 处置
+--------------------------------------------------------------------------------
+ValueError: 'LEROBOT_HOME' is deprecated    该变量存在即报错。unset 它，只留
+                                            HF_LEROBOT_HOME。（第 6 步）
+
+pip 卡在 building wheel for av              PyPI 撤了 14.4.0 的 wheel。
+                                            改用 conda-forge。（第 2 步）
+
+pip check 报 opencv-python-headless 缺失    预期行为，忽略，不要装。
+
+pip install 结尾出现 ERROR: dependency      只是复述了同一条 headless 抱怨，
+conflicts                                   看 "Successfully installed" 那行才算数。
+
+numpy 被拉到 2.x                            openpi 要求 numpy<2。装 lerobot 时
+                                            漏了 --no-deps，或补装依赖时没钉版本。
+
+mujoco viewer 起不来                        conda install -c conda-forge
+                                            libstdcxx-ng mesalib；
+                                            或先用采集脚本的 --headless 验流程。
+
+info.json 结构与旧机不符                    先查 git rev-parse HEAD，别改脚本。
+
+
+================================================================================
+附录：requirements-dummyx.txt
+================================================================================
+# ---------- 三个脚本直接 import 的 ----------
+numpy==1.26.4
+opencv-python==4.11.0.86
+mujoco==2.3.7
+tqdm==4.67.1
+tyro==0.9.22
+
+# ---------- lerobot 运行期依赖（决定数据集落盘格式） ----------
+torch==2.7.1
+torchvision==0.22.1
+torchcodec==0.4.0
+av==14.4.0
+datasets==3.6.0
+huggingface-hub==0.32.3
+hf-transfer==0.1.9
+hf-xet==1.1.2
+pyarrow==20.0.0
+pandas==2.2.3
+pillow==11.2.1
+safetensors==0.5.3
+transformers==4.53.2
+tokenizers==0.21.1
+imageio==2.37.0
+imageio-ffmpeg==0.6.0
+diffusers==0.33.1
+einops==0.8.1
+gymnasium==0.29.1
+jsonlines==4.0.0
+numba==0.61.2
+llvmlite==0.44.0
+omegaconf==2.3.0
+draccus==0.10.0
+deepdiff==8.5.0
+zarr==3.0.8
+numcodecs==0.16.1
+rerun-sdk==0.23.1
+termcolor==3.1.0
+wandb==0.19.11
+packaging==25.0
+scipy==1.15.3
+jinja2==3.1.6
+filelock==3.18.0
+pynput==1.8.1
+evdev==1.9.2
+flask==3.1.1
+
+# ---------- deploy 脚本的 openpi_client ----------
+websockets==15.0.1
+msgpack==1.1.0
+
+# ---------- 可选，仅为清空 pip check ----------
+cmake==4.0.2
+gdown==5.2.0
+h5py==3.13.0
+pymunk==7.0.0
+pyzmq==26.4.0
+
+# 不要加 opencv-python-headless
+================================================================================

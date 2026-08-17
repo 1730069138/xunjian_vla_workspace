@@ -1,0 +1,105 @@
+jun@jun:~/xunjian_vla_workspace$ tree
+.
+├── assets
+│   ├── meshes
+│   │   ├── base_link.STL
+│   │   ├── camera_link.STL
+│   │   ├── link0.STL
+│   │   ├── link1.STL
+│   │   ├── link2.STL
+│   │   ├── link3.STL
+│   │   ├── link4.STL
+│   │   ├── link5.STL
+│   │   ├── link6.STL
+│   │   ├── link7.STL
+│   │   ├── link8.STL
+│   │   └── link9.STL
+│   ├── objects
+│   │   └── flat_screwdriver
+│   │       ├── textured_coacd_0.stl
+│   │       ├── textured_coacd_1.stl
+│   │       ├── textured_coacd_2.stl
+│   │       ├── textured_coacd_3.stl
+│   │       ├── textured.mtl
+│   │       ├── textured.obj
+│   │       └── texture_map.png
+│   └── textures
+│       ├── 0.png
+│       ├── 10.png
+│       ├── 1.png
+│       ├── 2.png
+│       ├── 3.png
+│       ├── 4.png
+│       ├── 5.png
+│       ├── 6.png
+│       ├── 7.png
+│       ├── 8.png
+│       └── 9.png
+├── common
+│   ├── __init__.py
+│   ├── __pycache__
+│   │   ├── __init__.cpython-310.pyc
+│   │   ├── __init__.cpython-311.pyc
+│   │   ├── robot_spec.cpython-310.pyc
+│   │   └── robot_spec.cpython-311.pyc
+│   └── robot_spec.py
+├── dummyx_conda_setup.txt
+├── dummyx_pipeline_commands.txt
+├── models
+│   ├── xunjian_arm.urdf
+│   └── xunjian_arm.xml
+├── recordings
+│   └── run_none_Case1_no_obs_no_apf_no_cont
+│       ├── fail
+│       │   ├── data_ep_010.npz
+│       │   └── ep_010_221603.mp4
+│       ├── progress.json
+│       └── success
+│           ├── data_ep_001.npz
+│           ├── data_ep_002.npz
+│           ├── data_ep_003.npz
+│           ├── data_ep_004.npz
+│           ├── data_ep_005.npz
+│           ├── data_ep_006.npz
+│           ├── data_ep_007.npz
+│           ├── data_ep_008.npz
+│           ├── data_ep_009.npz
+│           ├── ep_001_220303.mp4
+│           ├── ep_002_220324.mp4
+│           ├── ep_003_220344.mp4
+│           ├── ep_004_220406.mp4
+│           ├── ep_005_220429.mp4
+│           ├── ep_006_220450.mp4
+│           ├── ep_007_220511.mp4
+│           ├── ep_008_220537.mp4
+│           └── ep_009_220600.mp4
+├── requirements-dummyx.txt
+├── scenes
+│   └── xunjian_arm_scene.xml
+└── scripts
+    ├── 备份
+    │   ├── 复盘笔记.txt
+    │   ├── auto_grasp_screwdriver2.py
+    │   ├── auto_grasp_screwdriver3.py
+    │   ├── auto_grasp_screwdriver（claude版）.zip
+    │   ├── auto_grasp_screwdriver.py
+    │   ├── config.py
+    │   ├── convert_screwdriver_to_lerobot_oldenv copy.py
+    │   ├── convert_screwdriver_to_lerobot_oldenv.py
+    │   ├── data_collector（新任务单次固定位置）.py
+    │   ├── deploy_screwdriver_client2.py
+    │   └── train.py
+    ├── auto_grasp_screwdriver.py
+    ├── compute_norm_stats.py
+    ├── convert_xunjiandummyx_to_lerobot.py
+    ├── deploy_screwdriver_client.py
+    ├── environment.yml
+    ├── openpi_freeze.txt
+    ├── read_data.py
+    ├── test_policy_replay.py
+    └── visualize_camera.py
+
+15 directories, 83 files
+
+
+

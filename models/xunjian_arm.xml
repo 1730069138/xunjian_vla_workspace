@@ -1,0 +1,167 @@
+<mujoco model="xunjian_arm">
+  <compiler angle="radian" meshdir="../assets/meshes" eulerseq="zyx" autolimits="true" />
+
+  <option iterations="50" timestep="0.001" solver="PGS" gravity="0 0 -9.81" />
+
+  <default>
+    <joint limited="true" damping="0.1" armature="0.05" frictionloss="0.02" />
+    <geom condim="4" friction="0.9 0.2 0.2" solref="0.001 2" />
+    <position kp="100" dampratio="1" forcerange="-150 150" />
+    
+    <default class="visualgeom">
+      <geom group="1" condim="1" contype="0" conaffinity="0" />
+    </default>
+    <default class="collisiongeom">
+      <geom group="0" condim="4" contype="1" conaffinity="15" />
+    </default>
+  </default>
+
+  <asset>
+    <mesh name="base_link" file="base_link.STL" />
+    <mesh name="link0" file="link0.STL" />
+    <mesh name="link1" file="link1.STL" />
+    <mesh name="link2" file="link2.STL" />
+    <mesh name="link3" file="link3.STL" />
+    <mesh name="link4" file="link4.STL" />
+    <mesh name="mesh_link5" file="link5.STL" /> 
+    <mesh name="link6" file="link6.STL" />
+    <mesh name="link7" file="link7.STL" />
+    <mesh name="link8" file="link8.STL" />
+    <mesh name="link9" file="link9.STL" />
+    <mesh name="camera_link" file="camera_link.STL" />
+  </asset>
+
+  <worldbody>
+    <light directional="true" diffuse="0.5 0.5 0.5" specular="0.1 0.1 0.1" pos="0 0 5.0" dir="0 0 -1" />
+    <light directional="true" diffuse="0.5 0.5 0.5" specular="0.2 0.2 0.2" pos="0 0 4" dir="0 0 -1" />
+    
+    <body name="base_link" pos="0 0 0" euler="0 0 0">
+      <inertial pos="0.00916368 -0.000338799 0.199332" mass="21.4109" fullinertia="0.385018 0.48532 0.78823 -0.00035859 0.000689894 -0.000145879" />
+      <geom type="mesh" mesh="base_link" rgba="0 0.12 0.5 1" class="visualgeom" />
+      <geom type="mesh" mesh="base_link" rgba="0 0.12 0.5 1" class="collisiongeom" />
+
+      <body name="link0" pos="0.128668 -0.001 0.732" euler="0 0 0">
+        <inertial pos="0.00530923 9.54428e-10 0.042459" mass="0.235337" fullinertia="0.000426888 0.00038896 0.000512654 3.55599e-12 3.71757e-06 -3.51302e-12" />
+        <geom type="mesh" mesh="link0" rgba="0.2 0.2 0.2 1" class="visualgeom" />
+        <geom type="mesh" mesh="link0" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
+
+        <body name="link1" pos="0.000340196 0 0.082" euler="0 0 0">
+          <joint name="joint1" type="hinge" axis="0 0 -1" limited="true" range="-3.048 3.048" />
+          <inertial pos="0.0099034 -0.00924423 0.0153812" mass="0.064146" fullinertia="1.4699e-05 1.89498e-05 2.31483e-05 1.01831e-06 -1.61303e-06 -4.55413e-07" />
+          <geom type="mesh" mesh="link1" rgba="0.2 0.2 0.2 1" class="visualgeom" />
+          <geom type="mesh" mesh="link1" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
+
+          <body name="link2" pos="0.035 -0.0055 0.0344946" euler="0 0 -1.5707963267949">
+            <joint name="joint2" type="hinge" axis="0 0 -1" limited="true" range="-1.876 1.407" />
+            <inertial pos="0.000851378 -0.101406 0.0146918" mass="0.546235" fullinertia="0.00091452 0.000284607 0.00101827 -1.42252e-05 3.21694e-06 4.75305e-06" />
+            <geom type="mesh" mesh="link2" rgba="0.2 0.2 0.2 1" class="visualgeom" />
+            <geom type="mesh" mesh="link2" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
+
+            <body name="link3" pos="-1.08501e-05 -0.201 0" euler="0 0 0">
+              <joint name="joint3" type="hinge" axis="0 0 1" limited="true" range="-1.407 1.313" />
+              <inertial pos="-0.00979478 -0.0577421 6.22341e-05" mass="0.202277" fullinertia="0.000161197 0.000109384 0.000155213 -6.86817e-06 3.684e-06 1.72023e-05" />
+              <geom type="mesh" mesh="link3" rgba="0.2 0.2 0.2 1" class="visualgeom" />
+              <geom type="mesh" mesh="link3" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
+
+              <body name="link4" pos="0.019505 -0.06 0.00199122" euler="-1.57079632679486 0 -1.5707963267949">
+                <joint name="joint4" type="hinge" axis="0 0 1" limited="true" range="-1.876 1.876" />
+                <inertial pos="0.000591616 -0.00266666 0.0802315" mass="0.251083" fullinertia="0.000293513 0.000319109 0.000118068 2.1021e-07 -9.73608e-07 -2.00527e-05" />
+                <geom type="mesh" mesh="link4" rgba="0.2 0.2 0.2 1" class="visualgeom" />
+                <geom type="mesh" mesh="link4" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
+
+                <body name="link5" pos="0 -0.0275 0.108526" euler="0 -1.5707963267949 1.57079632679479">
+                  <joint name="joint5" type="hinge" axis="0 0 -1" limited="true" range="-1.735 1.688" />
+                  <inertial pos="-0.264066 0.846372 -0.0232938" mass="0.2324" fullinertia="0.02443 0.01466 0.02608 0.00427 -0.000077 -0.0000026" />
+                  <geom type="mesh" mesh="mesh_link5" rgba="0.2 0.2 0.2 1" class="visualgeom" />
+                  <geom type="mesh" mesh="mesh_link5" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
+
+                  <body name="link6" pos="0.0865 0 -0.0285241" euler="-1.57079632679486 0 -1.5707963267949">
+                    <joint name="joint6" type="hinge" axis="0 0 1" limited="true" range="0 4.76" />
+                    <inertial pos="0.000957187 -0.00413458 0.0325373" mass="0.0894887" fullinertia="3.94183e-05 6.92259e-05 6.06535e-05 -5.23006e-08 2.46114e-08 3.94915e-07" />
+                    <geom type="mesh" mesh="link6" rgba="0.2 0.2 0.2 1" class="visualgeom" />
+                    <geom type="mesh" mesh="link6" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
+
+                    <body name="link7" pos="0 0 0.096" euler="0 0 0">
+                      <inertial pos="-3.31069e-13 5.97169e-07 -0.00125514" mass="0.0730012" fullinertia="0.000143024 1.7514e-05 0.000158524 2.3728e-08 2.5594e-15 1.16009e-10" />
+                      <geom type="mesh" mesh="link7" rgba="0.2 0.2 0.2 1" class="visualgeom" />
+                      <geom type="mesh" mesh="link7" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
+                      
+                      <site name="ee_site" pos="0 0 0.08" size="0.01" rgba="1 0 0 1" />
+
+                      <geom name="ee_axis_x" type="cylinder" size="0.002 0.04" pos="0.04 0 0.08" quat="0.7071068 0 0.7071068 0" rgba="1 0 0 0.8" contype="0" conaffinity="0" group="1"/>
+                      <geom name="ee_axis_y" type="cylinder" size="0.002 0.04" pos="0 0.04 0.08" quat="0.7071068 -0.7071068 0 0" rgba="0 1 0 0.8" contype="0" conaffinity="0" group="1"/>
+                      <geom name="ee_axis_z" type="cylinder" size="0.002 0.04" pos="0 0 0.12" quat="1 0 0 0" rgba="0 0 1 0.8" contype="0" conaffinity="0" group="1"/>
+                      <body name="link8" pos="0 -0.023831 0.016" euler="0 0 0">
+                        <joint name="joint8" type="slide" axis="0 1 0" range="-0.02 0.02" />
+                        <inertial pos="0.000383624 -0.00773419 0.0191484" mass="0.0277487" fullinertia="1.01052e-05 1.35522e-05 5.60884e-06 4.34764e-08 2.15425e-07 -1.60833e-06" />
+                        <geom type="mesh" mesh="link8" rgba="0.2 0.2 0.2 1" class="visualgeom" />
+                        <geom type="mesh" mesh="link8" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
+                      </body>
+
+                      <body name="link9" pos="0 0.023831 0.016" euler="0 0 0">
+                        <joint name="joint9" type="slide" axis="0 1 0" range="-0.02 0.02" />
+                        <inertial pos="-0.000383624 0.00773419 0.0191484" mass="0.0277487" fullinertia="1.01052e-05 1.35522e-05 5.60884e-06 4.34764e-08 -2.15425e-07 1.60833e-06" />
+                        <geom type="mesh" mesh="link9" rgba="0.2 0.2 0.2 1" class="visualgeom" />
+                        <geom type="mesh" mesh="link9" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
+                      </body>
+
+                      <body name="camera_link" pos="0.0500408 0 -0.0128967" euler="-1.57079632679557 0 0.174532925199683">
+                        <inertial pos="-6.50521e-16 -0.00134267 -0.00996409" mass="0.0505252" fullinertia="4.53746e-06 3.63739e-05 3.59554e-05 -3.17864e-20 -2.80323e-20 3.11566e-07" />
+                        <geom type="mesh" mesh="camera_link" rgba="0.2 0.2 0.2 1" class="visualgeom" />
+                        <geom type="mesh" mesh="camera_link" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
+                        <camera name="d415_rgb" pos="0 0 0" quat="0 0 1 0" fovy="43" />
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position name="Joint1" joint="joint1" ctrlrange="-3.048 3.048" />
+    <position name="Joint2" joint="joint2" ctrlrange="-1.876 1.407" />
+    <position name="Joint3" joint="joint3" ctrlrange="-1.407 1.313" />
+    <position name="Joint4" joint="joint4" ctrlrange="-1.876 1.876" />
+    <position name="Joint5" joint="joint5" ctrlrange="-1.735 1.688" />
+    <position name="Joint6" joint="joint6" ctrlrange="0 4.76" />
+    <position name="Joint8" joint="joint8" ctrlrange="-0.02 0.02" />
+    <position name="Joint9" joint="joint9" ctrlrange="-0.02 0.02" />
+  </actuator>
+
+  <sensor>
+    <actuatorpos name="Joint1_p" actuator="Joint1" />
+    <actuatorvel name="Joint1_v" actuator="Joint1" />
+    <actuatorfrc name="Joint1_f" actuator="Joint1" noise="0.001" />
+    <actuatorpos name="Joint2_p" actuator="Joint2" />
+    <actuatorvel name="Joint2_v" actuator="Joint2" />
+    <actuatorfrc name="Joint2_f" actuator="Joint2" noise="0.001" />
+    <actuatorpos name="Joint3_p" actuator="Joint3" />
+    <actuatorvel name="Joint3_v" actuator="Joint3" />
+    <actuatorfrc name="Joint3_f" actuator="Joint3" noise="0.001" />
+    <actuatorpos name="Joint4_p" actuator="Joint4" />
+    <actuatorvel name="Joint4_v" actuator="Joint4" />
+    <actuatorfrc name="Joint4_f" actuator="Joint4" noise="0.001" />
+    <actuatorpos name="Joint5_p" actuator="Joint5" />
+    <actuatorvel name="Joint5_v" actuator="Joint5" />
+    <actuatorfrc name="Joint5_f" actuator="Joint5" noise="0.001" />
+    <actuatorpos name="Joint6_p" actuator="Joint6" />
+    <actuatorvel name="Joint6_v" actuator="Joint6" />
+    <actuatorfrc name="Joint6_f" actuator="Joint6" noise="0.001" />
+    <actuatorpos name="Joint8_p" actuator="Joint8" />
+    <actuatorvel name="Joint8_v" actuator="Joint8" />
+    <actuatorfrc name="Joint8_f" actuator="Joint8" noise="0.001" />
+    <actuatorpos name="Joint9_p" actuator="Joint9" />
+    <actuatorvel name="Joint9_v" actuator="Joint9" />
+    <actuatorfrc name="Joint9_f" actuator="Joint9" noise="0.001" />
+  </sensor>
+  
+  <contact>
+    <exclude body1="link0" body2="link2" />
+    <exclude body1="link0" body2="link1" />
+  </contact>
+</mujoco>

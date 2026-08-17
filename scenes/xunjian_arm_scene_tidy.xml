@@ -1,0 +1,227 @@
+<mujoco model="xunjian_arm_scene_tidy">
+  <include file="../models/xunjian_arm.xml"/>
+
+  <option timestep="0.001" integrator="RK4" gravity="0 0 -9.81" />
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <global azimuth="140" elevation="-30"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.1 0.2 0.3" rgb2="0.2 0.3 0.4" width="300" height="300" mark="edge" markrgb="0.2 0.3 0.4"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true"/>
+
+    <texture name="tex_table_0" type="2d" file="../assets/textures/0.png"/>
+    <texture name="tex_table_1" type="2d" file="../assets/textures/1.png"/>
+    <texture name="tex_table_2" type="2d" file="../assets/textures/2.png"/>
+    <texture name="tex_table_3" type="2d" file="../assets/textures/3.png"/>
+    <texture name="tex_table_4" type="2d" file="../assets/textures/4.png"/>
+    <texture name="tex_table_5" type="2d" file="../assets/textures/5.png"/>
+    <texture name="tex_table_6" type="2d" file="../assets/textures/6.png"/>
+    <texture name="tex_table_7" type="2d" file="../assets/textures/7.png"/>
+    <texture name="tex_table_8" type="2d" file="../assets/textures/8.png"/>
+    <texture name="tex_table_9" type="2d" file="../assets/textures/9.png"/>
+    <texture name="tex_table_10" type="2d" file="../assets/textures/10.png"/>
+
+    <material name="mat_table_0" texture="tex_table_0" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_1" texture="tex_table_1" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_2" texture="tex_table_2" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_3" texture="tex_table_3" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_4" texture="tex_table_4" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_5" texture="tex_table_5" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_6" texture="tex_table_6" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_7" texture="tex_table_7" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_8" texture="tex_table_8" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_9" texture="tex_table_9" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_10" texture="tex_table_10" specular="0.2" shininess="0.1"/>
+
+    <!-- ==================== 巡检物体资产 ====================
+         视觉用原始扫描网格，碰撞用 primitive（胶囊/圆柱/长方体）。
+         GSO 自带的 32 个凸子网格没有使用：接触点数量太多，会让伺服频率下
+         的接触旋量累加变噪，也拖慢仿真。primitive 近似与 PACE 避障层的
+         胶囊体抽象 C_k 是同一套几何语义。
+         · · · · · · · · · · · · · · · · · · · · · · · · · · ·
+         路径写法说明（与本文件里既有的 flat_screwdriver 条目完全同构）：
+         models/xunjian_arm.xml 设置了 meshdir="../assets/meshes/"，因此
+           mesh    file="../objects/X/a.obj"
+             -> scenes/../assets/meshes/../objects/X/a.obj = assets/objects/X/a.obj
+           texture file="../assets/objects/X/b.png"   (texturedir 为空)
+             -> scenes/../assets/objects/X/b.png       = assets/objects/X/b.png
+         两种写法不同，但落到磁盘上是同一个目录。实际文件全部放在：
+
+           assets/objects/screwdriver/model.obj     (GSO Craftsman_Grip_Screwdriver_Phillips_Cushion)
+           assets/objects/screwdriver/texture.png
+           assets/objects/flashlight/model.obj      (GSO HeavyDuty_Flashlight)
+           assets/objects/flashlight/texture.png
+           assets/objects/multimeter/mm_panel.png
+           assets/objects/multimeter/mm_case.png
+
+         若 xunjian_arm.xml 里的 meshdir 不是 ../assets/meshes/，把上面两个
+         mesh 的 file 改成相对该 meshdir 指向 assets/objects/ 即可。
+    -->
+    <mesh name="screwdriver_mesh" file="../objects/screwdriver/model.obj"/>
+    <texture name="screwdriver_tex" type="2d" file="../assets/objects/screwdriver/texture.png"/>
+    <material name="screwdriver_mat" texture="screwdriver_tex" specular="0.4" shininess="0.3"/>
+
+    <mesh name="flashlight_mesh" file="../objects/flashlight/model.obj"/>
+    <texture name="flashlight_tex" type="2d" file="../assets/objects/flashlight/texture.png"/>
+    <material name="flashlight_mat" texture="flashlight_tex" specular="0.3" shininess="0.3"/>
+
+    <texture name="mm_panel_tex" type="2d" file="../assets/objects/multimeter/mm_panel.png"/>
+    <texture name="mm_case_tex"  type="2d" file="../assets/objects/multimeter/mm_case.png"/>
+    <material name="mm_panel" texture="mm_panel_tex" texuniform="false" texrepeat="1 1" specular="0.25" shininess="0.35"/>
+    <material name="mm_shell" texture="mm_case_tex"  texuniform="true"  texrepeat="8 8" specular="0.2" shininess="0.25"/>
+    <material name="mm_dark" rgba="0.13 0.13 0.15 1" specular="0.15"/>
+  </asset>
+
+  <default>
+    <!-- 三个物体共用：视觉 geom 不参与碰撞、不贡献质量 -->
+    <default class="obj_visual">
+      <geom group="2" contype="0" conaffinity="0" mass="0"/>
+    </default>
+    <!-- 碰撞 geom：condim=6 带滚动摩擦，防止圆柱形物体在台面上自发滚动 -->
+    <default class="obj_collision">
+      <geom group="3" condim="6" rgba="1 0 0 0" solref="0.004 1" solimp="0.95 0.99 0.001"/>
+    </default>
+    <default class="pad">
+      <geom type="box" contype="0" conaffinity="0" group="2"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 .25" material="grid" condim="3"/>
+
+    <light directional="true" diffuse="0.6 0.6 0.6" specular="0.2 0.2 0.2" pos="0 0 4" dir="0 0 -1" castshadow="true"/>
+    <light directional="true" diffuse="0.3 0.3 0.3" specular="0 0 0" pos="0 0 4" dir="1 1 -1" castshadow="false"/>
+
+    <body name="table" pos="0.60 0 0">
+        <geom name="table_top" type="box" pos="0 0 0.712" size="0.3 0.6 0.02" material="mat_table_1" friction="1 0.05 0.0001" condim="3"/>
+
+        <!-- 绿色：物体生成区 (world x 0.30~0.60, y -0.125~0.125) -->
+        <geom name="zone_target" type="box" pos="-0.15 0 0.733" size="0.15 0.125 0.001" rgba="0 1 0 0.3" contype="0" conaffinity="0" group="2"/>
+        <!-- 红色：障碍区 (world y 0.175~0.275) -->
+        <geom name="zone_obstacle" type="box" pos="-0.15 0.225 0.733" size="0.15 0.05 0.001" rgba="1 0 0 0.3" contype="0" conaffinity="0" group="2"/>
+        <!-- 蓝色：归位区 (world y 0.275~0.525) -->
+        <geom name="zone_storage" type="box" pos="-0.15 0.40 0.733" size="0.15 0.125 0.001" rgba="0 0 1 0.3" contype="0" conaffinity="0" group="2"/>
+
+        <geom name="leg1" type="cylinder" pos="0.25 0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+        <geom name="leg2" type="cylinder" pos="0.25 -0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+        <geom name="leg3" type="cylinder" pos="-0.25 0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+        <geom name="leg4" type="cylinder" pos="-0.25 -0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+    </body>
+
+    <!-- ==================== 归位目标位 ====================
+         每个物体一个专属工位，x 与生成位一一对齐，只在 y 上平移 0.40 m，
+         因此三条转移路径都正交穿过红色障碍区。
+         纯视觉标记 (contype=0)，成功判据请直接读 site 坐标。
+         原来的 plasticbox 已注释掉：它的占地 x[0.25,0.45] y[0.25,0.55]
+         几乎覆盖整个蓝色区，与三个工位冲突；而且任务已从"投入收纳箱"
+         改为"放到指定位置"，收纳箱不再是正确的目标语义。
+    -->
+    <body name="targets" pos="0 0 0">
+      <geom class="pad" name="pad_screwdriver" pos="0.34 0.40 0.7335" size="0.030 0.140 0.0012" rgba="0.20 0.85 0.95 0.45"/>
+      <geom class="pad" name="pad_flashlight"  pos="0.45 0.40 0.7335" size="0.050 0.125 0.0012" rgba="0.95 0.65 0.15 0.45"/>
+      <geom class="pad" name="pad_multimeter"  pos="0.56 0.40 0.7335" size="0.050 0.090 0.0012" rgba="0.85 0.35 0.85 0.45"/>
+      <site name="tgt_screwdriver" pos="0.34 0.40 0.7350" type="sphere" size="0.008" rgba="0.20 0.85 0.95 1"/>
+      <site name="tgt_flashlight"  pos="0.45 0.40 0.7350" type="sphere" size="0.008" rgba="0.95 0.65 0.15 1"/>
+      <site name="tgt_multimeter"  pos="0.56 0.40 0.7350" type="sphere" size="0.008" rgba="0.85 0.35 0.85 1"/>
+    </body>
+
+    <!-- <body name="plasticbox" pos="0.35 0.40 0.732">
+        <freejoint name="plasticbox_joint"/>
+        <geom type="box" size="0.10 0.15 0.005" pos="0 0 0.005" rgba="0.5 0.35 0.25 1" friction="1.5 0.1 0.0001" condim="4"/>
+        <geom type="box" size="0.10 0.002 0.03" pos="0 0.148 0.03" rgba="0.5 0.35 0.25 1" friction="1.5 0.1 0.0001" condim="4"/>
+        <geom type="box" size="0.10 0.002 0.03" pos="0 -0.148 0.03" rgba="0.5 0.35 0.25 1" friction="1.5 0.1 0.0001" condim="4"/>
+        <geom type="box" size="0.002 0.15 0.03" pos="0.098 0 0.03" rgba="0.5 0.35 0.25 1" friction="1.5 0.1 0.0001" condim="4"/>
+        <geom type="box" size="0.002 0.15 0.03" pos="-0.098 0 0.03" rgba="0.5 0.35 0.25 1" friction="1.5 0.1 0.0001" condim="4"/>
+    </body> -->
+
+    <!-- ==================== 物体 1：螺丝刀 ====================
+         GSO Craftsman 十字螺丝刀。长轴 260 mm 沿世界 +y，手柄在 +y 端。
+         手柄直径 35 mm，杆径 8 mm。抓取点在手柄中心，TCP 高度约 0.748 m
+         （台面上方仅 16 mm）——交互调节层必然激活。
+         位姿取自 6 s 沉降后的稳态，开局无掉落瞬态。
+    -->
+    <body name="screwdriver" pos="0.3398 0.0001 0.7285" quat="0.70698 0.02433 0.01415 0.70667">
+      <freejoint name="fj_screwdriver"/>
+      <inertial pos="0.03 0.005 0.017" mass="0.10" diaginertia="2.0e-5 1.6e-4 1.6e-4"/>
+      <geom class="obj_visual" type="mesh" mesh="screwdriver_mesh" material="screwdriver_mat"/>
+      <geom class="obj_collision" name="sd_shaft" type="capsule"
+            fromto="-0.128 0.0051 0.0090  0.045 0.0051 0.0090" size="0.0040"
+            friction="1.5 0.05 0.03"/>
+      <geom class="obj_collision" name="sd_handle" type="capsule"
+            fromto="0.058 0.0053 0.0195  0.118 0.0053 0.0195" size="0.0175"
+            friction="1.5 0.05 0.03"/>
+      <site name="grasp_screwdriver" pos="0.088 0.0053 0.0195" type="sphere" size="0.006" rgba="1 1 0 0.6"/>
+    </body>
+
+    <!-- ==================== 物体 2：手电筒 ====================
+         GSO HeavyDuty_Flashlight。原模型长轴是局部 z（竖立姿态），这里绕 x
+         轴 -90° 放倒，长轴 229 mm 沿世界 +y。
+         注意：必须放倒。若竖立，抓取点在台面上方 10~20 cm，交互调节层全程
+         不激活，等于白加一个物体。
+         筒身直径 48 mm（抓取处），尾盖 65 mm，灯头 76 mm；头尾比筒身粗，
+         躺放时筒身悬空约 10 mm，指尖有余量。
+         condim=6 + 滚动摩擦 0.03 用于抑制圆柱滚动。
+    -->
+    <body name="flashlight" pos="0.4510 -0.1147 0.7673" quat="0.70273 -0.71128 0.00760 0.00763">
+      <freejoint name="fj_flashlight"/>
+      <inertial pos="0.003 0.002 0.105" mass="0.30" diaginertia="1.4e-3 1.4e-3 1.6e-4"/>
+      <geom class="obj_visual" type="mesh" mesh="flashlight_mesh" material="flashlight_mat"/>
+      <geom class="obj_collision" name="fl_tail" type="cylinder"
+            fromto="0.0045 0.0023 0.002  0.0045 0.0023 0.058" size="0.0323"
+            friction="1.2 0.05 0.03"/>
+      <geom class="obj_collision" name="fl_barrel" type="cylinder"
+            fromto="0.0070 0.0059 0.058  0.0070 0.0059 0.158" size="0.0238"
+            friction="1.2 0.05 0.03"/>
+      <geom class="obj_collision" name="fl_head" type="cylinder"
+            fromto="-0.0037 -0.0053 0.158  -0.0037 -0.0053 0.228" size="0.0380"
+            friction="1.2 0.05 0.03"/>
+      <site name="grasp_flashlight" pos="0.0070 0.0059 0.108" type="sphere" size="0.006" rgba="1 1 0 0.6"/>
+    </body>
+
+    <!-- ==================== 物体 3：万用表 ====================
+         primitive 建模，160 x 80 x 40 mm，质量 0.2 kg。长轴沿世界 +y。
+         碰撞只有一个 box：接触点少，f_c 累加干净。
+    -->
+    <body name="multimeter" pos="0.5600 0.0000 0.7520" quat="0.7071068 0 0 0.7071068">
+      <freejoint name="fj_multimeter"/>
+      <inertial pos="0 0 0" mass="0.2" diaginertia="3.3e-4 1.1e-4 4.0e-4"/>
+      <geom class="obj_collision" name="mm_col" type="box" size="0.080 0.040 0.020"
+            friction="1.0 0.02 0.001"/>
+      <geom class="obj_visual" type="box" size="0.0795 0.0395 0.0198" material="mm_shell"/>
+      <geom class="obj_visual" type="box" pos="0 0 0.0199" size="0.080 0.040 0.0004" material="mm_panel"/>
+      <geom class="obj_visual" type="box" pos="-0.0815 0 0" size="0.0025 0.040 0.020" material="mm_dark"/>
+      <geom class="obj_visual" type="box" pos=" 0.0815 0 0" size="0.0025 0.040 0.020" material="mm_dark"/>
+      <site name="grasp_multimeter" pos="0 0 0" type="sphere" size="0.006" rgba="1 1 0 0.6"/>
+    </body>
+
+    <!-- ==================== 障碍物 ====================
+         位于红色区中央。原注释里的 z=0.82 会让它悬空 8 mm 后掉落，已改为
+         0.8121（台面 0.732 + 半高 0.08）。
+         到三条转移航道的净间隙（扣除腕部胶囊 r_a=0.07 与支柱半宽 0.02）：
+           x=0.34 航道 ~0.020 m | x=0.45 航道 直接阻挡 | x=0.56 航道 ~0.020 m
+         三条航道都落在 δ_max = 0.08 m 之内，避障层全部会激活。
+         支柱到最近工位 (0.45,0.40) 距离 0.175 m —— GNRON 压力比原场景的
+         0.21 m 更强。
+         倾倒判据沿用 R_pillar[3,3] < 0.9。
+    -->
+    <body name="dynamic_pillar" pos="0.45 0.225 0.8121">
+        <freejoint name="pillar_joint"/>
+        <geom name="pillar_geom" type="box" size="0.02 0.02 0.08" rgba="0.55 0.55 0.58 1"
+              mass="0.2" friction="1 0.05 0.0001" condim="4"/>
+    </body>
+
+    <body name="cam_lookat_target" pos="0.45 0.20 0.735">
+        <site name="focus_point" type="sphere" size="0.02" rgba="1 1 0 1"/>
+    </body>
+
+    <body name="global_cam_body" pos="-0.1 0 1.4">
+        <site name="lens_point" type="sphere" size="0.03" rgba="1 0 0 1"/>
+        <camera name="global_cam" mode="targetbody" target="cam_lookat_target" fovy="55"/>
+    </body>
+
+  </worldbody>
+</mujoco>
