@@ -36,6 +36,11 @@ def run_signature(cfg, args):
         "apf": cfg["apf"],
         "contact": cfg["contact"],
         "fixed_eval": bool(args.fixed_eval),
+        # 🔧 [新增] 螺丝刀初始位姿分布也是实验条件：朝向抖动幅度、位置采样域。
+        #    任一改动都会换掉整个初始状态分布，新旧回合不能混在同一张表里统计。
+        "screw_yaw_jitter": float(rspec.SCREW_YAW_JITTER),
+        "spawn_x": list(rspec.SPAWN_X_RANGE),
+        "spawn_y": list(rspec.SPAWN_Y_RANGE),
     }
 
 
@@ -271,6 +276,40 @@ def process_apf_action(model, data, current_action, use_obstacle, step_counter):
 # ==========================================
 # 🆕 500Hz 级别的精准接触力提取
 # ==========================================
+# ==========================================
+# 🩺 接触诊断（--debug_contact 开启，默认关闭，对物理无任何影响）
+# ==========================================
+DEBUG_CONTACT = False
+DEBUG_CONTACT_EVERY = 20
+
+
+def dump_contacts(model, data, step_counter, tcp_id, valid_body_ids):
+    """打印当前所有真实接触，并标出哪些会被 get_target_table_force 计入。
+
+    用途：定位"下抓时被顶住抓不深"到底是几何碰撞、还是力控层在把末端往上推。
+    只读 data，不修改任何状态。
+    """
+    rows = []
+    for i in range(data.ncon):
+        c = data.contact[i]
+        if c.dist > 0:          # 只看真正接触/穿透的，忽略 margin 内的候选对
+            continue
+        g1 = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, c.geom1) or f"geom#{c.geom1}"
+        g2 = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, c.geom2) or f"geom#{c.geom2}"
+        b1 = model.geom_bodyid[c.geom1]
+        b2 = model.geom_bodyid[c.geom2]
+        counted = (0.71 < c.pos[2] < 0.76) and (b1 in valid_body_ids or b2 in valid_body_ids)
+        f6 = np.zeros(6, dtype=np.float64)
+        mujoco.mj_contactForce(model, data, i, f6)
+        rows.append(
+            f"        {'⚡计入力' if counted else '   ---  '}  "
+            f"{g1:<28} <-> {g2:<28} dist={c.dist:+.5f}  z={c.pos[2]:.4f}  "
+            f"|f|={np.linalg.norm(f6[:3]):7.3f} N"
+        )
+    if rows:
+        print("\n".join(rows))
+
+
 def get_target_table_force(model, data, valid_body_ids):
     f_xyz = np.zeros(3)
     for i in range(data.ncon):
@@ -415,6 +454,43 @@ def apply_virtual_wall_protection(model, data, ctrl_cmd, tcp_id, current_f_xyz, 
 # ==========================================
 RIDX = None  # 由 main() 在加载场景后填入（rspec.resolve_indices 的结果）
 
+# ==============================================================================
+# 📸 全局状态快照
+#
+#   过去 reset_scene 是"逐个关节点名复位"：螺丝刀、海绵、立柱、机械臂，各写一段。
+#   凡是没被点到名的自由物体（收纳盒就是典型）一旦被撞飞，就再也回不来了 ——
+#   第 3 回合撞歪的盒子会一直歪到第 100 回合，而入盒判定用的还是原始坐标，
+#   成功率莫名其妙地掉，且不报任何错。
+#
+#   现在改成：加载场景后先存一份"出厂状态"，每回合复位时整体恢复，再叠加
+#   本回合需要的随机化。将来往场景里加任何新物体（tidy_B 的那些），都自动
+#   被覆盖，不会再出现"忘了复位某个新物体"这类静默污染。
+# ==============================================================================
+_QPOS_SNAPSHOT = None
+_QVEL_SNAPSHOT = None
+
+
+def capture_reset_snapshot(model, data):
+    """记录场景的出厂状态。必须在 load_scene 之后、跑任何回合之前调用一次。"""
+    global _QPOS_SNAPSHOT, _QVEL_SNAPSHOT
+    mujoco.mj_forward(model, data)
+    _QPOS_SNAPSHOT = data.qpos.copy()
+    _QVEL_SNAPSHOT = np.zeros_like(data.qvel)   # 出厂状态一定是静止的
+    print(f"📸 已记录场景出厂状态快照: nq={_QPOS_SNAPSHOT.size}, nv={_QVEL_SNAPSHOT.size} "
+          f"—— 每回合复位时整体恢复，被撞飞的物体不会跨回合污染实验")
+
+
+def restore_reset_snapshot(model, data):
+    """把整个场景恢复到出厂状态。快照缺失时直接报错，而不是安静地跳过。"""
+    if _QPOS_SNAPSHOT is None:
+        raise RuntimeError(
+            "场景快照未初始化：请在 main() 里 load_scene 之后调用 capture_reset_snapshot()。"
+        )
+    data.qpos[:] = _QPOS_SNAPSHOT
+    data.qvel[:] = _QVEL_SNAPSHOT
+    data.qacc[:] = 0.0
+    mujoco.mj_forward(model, data)
+
 # 🌟 复位后的沉降步数：与采集端 STEPS_SETTLE 同源（rspec 里没有就退回 1000）。
 #    采集端螺丝刀同样是丢在 z=0.80 再沉降，训练集里第一帧看到的一定是"已经躺在
 #    桌面上"的螺丝刀；部署端过去只做 mj_forward，第一帧是悬空的，属于分布外输入。
@@ -439,67 +515,51 @@ def _state_dof_adr(model):
     return _STATE_DOF_ADR
 
 
-_SCREW_BASE_QUAT = None
-
-# 🌟 起始朝向的偏航抖动幅度（度）。0 = 完全用场景 XML 里的朝向，不做任何随机。
-#    需要做朝向域随机时改成例如 15.0，则每回合在基准朝向上叠加 ±15° 的偏航。
-#    注意：改了它就等于改了实验条件，旧的 progress.json 不该继续续跑。
-SCREW_YAW_JITTER_DEG = 0.0
-
-
-def _screw_base_quat(model, qpos_adr):
-    """螺丝刀的基准朝向，直接取自编译后的 model.qpos0。
-
-    自由关节的 qpos0 就是 XML 里 body 的 pos/quat，所以场景文件里改了 quat
-    （例如平行桌面转 90°），这里会自动跟着变，不需要在脚本里再写一份数字 ——
-    两处各写一份、改了一处忘了另一处，正是最难查的那类静默不一致。
-    """
-    global _SCREW_BASE_QUAT
-    if _SCREW_BASE_QUAT is None:
-        q = np.array(model.qpos0[qpos_adr + 3 : qpos_adr + 7], dtype=float)
-        n = np.linalg.norm(q)
-        _SCREW_BASE_QUAT = q / n if n > 1e-9 else np.array([1.0, 0.0, 0.0, 0.0])
-    return _SCREW_BASE_QUAT
-
-
-def _screw_reset_quat(model, qpos_adr):
-    """基准朝向（可选叠加一个绕世界 Z 轴的偏航抖动）。"""
-    q_base = _screw_base_quat(model, qpos_adr)
-    if SCREW_YAW_JITTER_DEG <= 0.0:
-        return q_base.copy()
-    yaw = np.deg2rad(np.random.uniform(-SCREW_YAW_JITTER_DEG, SCREW_YAW_JITTER_DEG))
-    q_yaw = np.array([np.cos(yaw / 2.0), 0.0, 0.0, np.sin(yaw / 2.0)])
-    q_out = np.zeros(4)
-    mujoco.mju_mulQuat(q_out, q_yaw, q_base)   # 世界系偏航左乘在基准朝向上
-    return q_out
+# 🔗 [已改] 螺丝刀初始位姿（位置域 + 朝向 + 抖动幅度）全部来自 robot_spec，
+#    与采集端 randomize_object_pose 调的是同一个 rspec.sample_screw_spawn。
+#    过去这里是 np.random.uniform(0.38, 0.48) + 硬编码单位四元数：
+#      · 朝向：场景 xml 把螺丝刀绕 z 转了 90°，这里却摆回单位四元数，对不上且不报错；
+#      · 位置：朝向固定为 90° 后杆身沿世界 X、半长 0.10，x=0.38 会让刀尖伸到 0.28，
+#              而桌面在 x=0.30 就到头了 —— 螺丝刀直接挂在桌沿外。
+SPAWN_X_RANGE = rspec.SPAWN_X_RANGE
+SPAWN_Y_RANGE = rspec.SPAWN_Y_RANGE
+SCREW_YAW_JITTER = rspec.SCREW_YAW_JITTER
 
 
 def reset_scene(model, data, use_obstacle=False, target_xy=None):
-    global global_last_v_comp, global_vc, global_f_filtered
+    global global_last_v_comp, global_vc, global_f_filtered, last_q_dot
     global_last_v_comp = np.zeros(3) 
     global_vc = np.zeros(3)
     global_f_filtered = np.zeros(3)
-    
-    # 🌟 重置位置域基于新桌面的绿色区域
+    # 🔧 [新增] APF 的速度低通记忆同样是跨回合的全局量，过去漏清 —— 上一回合
+    #    最后的避障速度会被带进新回合的前几步。
+    last_q_dot = np.zeros(6)
+
+    # 📸 [新增] 先把整个场景恢复到出厂状态，再叠加本回合的随机化。
+    #    下面那些逐个点名的复位仍然保留：它们做的是"随机化/按工况摆放"，
+    #    而不是"清理上一回合的残留" —— 后者现在由快照统一负责。
+    restore_reset_snapshot(model, data)
+
+    # 🔗 [已改] 螺丝刀初始位姿走共享契约：位置域、基准朝向、抖动幅度与采集端同源。
+    #    --fixed_eval 只锁死 XY，朝向仍取场景基准（此时抖动为 0，本来就是定值）。
+    yaw = rspec.spawn_domain(model)["yaw"]
     if target_xy is not None:
         target_x, target_y = target_xy
     else:
-        target_x = np.random.uniform(0.38, 0.48)    
-        target_y = np.random.uniform(-0.05, 0.05)  
+        target_x, target_y, yaw = rspec.sample_screw_spawn(model)
+    rspec.set_screw_pose(model, data, target_x, target_y, yaw)
         
-    target_z = 0.80
-    target_jnt_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "fj_screwdriver")
-    if target_jnt_id != -1:
-        target_adr = model.jnt_qposadr[target_jnt_id]
-        target_dof = model.jnt_dofadr[target_jnt_id]
-        data.qpos[target_adr : target_adr+3] = [target_x, target_y, target_z]
-        # 🔧 [已修复] 原为硬编码的 [1, 0, 0, 0]：场景 XML 把螺丝刀绕 Z 轴转了 90°，
-        #    这里却把它按单位四元数摆回去，复位后的朝向与场景定义对不上，
-        #    而且不报任何错 —— 又是一个静默不一致。现在从 model.qpos0 取。
-        data.qpos[target_adr+3 : target_adr+7] = _screw_reset_quat(model, target_adr)
-        # 🌟 [新增] 清掉上一回合残留的线速度/角速度，否则螺丝刀是"被甩出去"而不是"被放下"
-        data.qvel[target_dof : target_dof+6] = 0.0
-        
+    # 🔧 [新增] 把海绵扔出场外，与采集端 auto_grasp_screwdriver.py 完全一致。
+    #    场景 XML 里 sponge 默认在 (0.45, -0.30, 0.80)，会掉在桌面上并出现在
+    #    global_cam 视野里；而训练集的每一帧里它都不存在 —— 部署端不做同样处理
+    #    就等于每一步都在喂分布外图像，且不会报任何错。
+    sponge_jnt_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "sponge_joint")
+    if sponge_jnt_id != -1:
+        s_adr, s_dof = model.jnt_qposadr[sponge_jnt_id], model.jnt_dofadr[sponge_jnt_id]
+        data.qpos[s_adr : s_adr+3] = [10.0, 10.0, -10.0]
+        data.qpos[s_adr+3 : s_adr+7] = [1, 0, 0, 0]
+        data.qvel[s_dof : s_dof+6] = 0.0
+
     pillar_jnt_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "pillar_joint")
     if pillar_jnt_id != -1:
         q_adr, v_adr = model.jnt_qposadr[pillar_jnt_id], model.jnt_dofadr[pillar_jnt_id]
@@ -513,6 +573,11 @@ def reset_scene(model, data, use_obstacle=False, target_xy=None):
         
     # 🔗 起手位姿 + 夹爪默认闭合，全部走共享契约，与采集端逐位一致
     rspec.reset_to_init(data, RIDX)
+
+    # 🔧 [新增] 把执行器指令对齐到起手位姿。position 执行器的 ctrl 是"目标角度"，
+    #    上一回合结束时它停在任务终点；沉降的 1000 步里若不对齐，执行器会一直
+    #    朝旧目标发力，与 reset_to_init 的钉位互相打架。
+    data.ctrl[:8] = data.qpos[RIDX.state_qpos_adr]
 
     # 🌟 [新增] 沉降：让螺丝刀从 z=0.80 自由落到桌面并静止，复现采集端的初始帧。
     #    整场速度先清零，避免上一回合的动量带进来；沉降期间每步把机械臂钉回
@@ -532,14 +597,43 @@ def reset_scene(model, data, use_obstacle=False, target_xy=None):
     data.qacc[:] = 0.0
     mujoco.mj_forward(model, data)
 
-def save_episode_video(frames, folder, episode_idx):
+def save_episode_video(frames, folder, episode_idx, fps=10.0):
     if not frames: return
     os.makedirs(folder, exist_ok=True)
     filename = os.path.join(folder, f"ep_{episode_idx:03d}_{time.strftime('%H%M%S')}.mp4")
     height, width, _ = frames[0].shape
-    out = cv2.VideoWriter(filename, cv2.VideoWriter_fourcc(*'mp4v'), 10.0, (width, height))
+    out = cv2.VideoWriter(filename, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
     for f in frames: out.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
     out.release()
+
+
+# ==============================================================================
+# 🖥️ 无窗口模式的假 viewer
+#
+#   passive viewer 每个策略步要 sync 一次，内部还带帧率节流 —— 批量跑 12 组
+#   × 100 回合时没人盯着看，这部分是纯浪费。用一个接口相同的空壳替掉，
+#   主循环一行都不用改。
+#
+#   user_scn = None 是给 APF 可视化用的哨兵：无窗口时没有装饰层可画。
+# ==============================================================================
+class _NullViewer:
+    """接口与 mujoco.viewer 的 handle 一致，但什么都不做。"""
+    user_scn = None
+
+    def __init__(self):
+        self.opt = mujoco.MjvOption()   # 让 viewer.opt.xxx 的赋值有地方落
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def is_running(self):
+        return True     # 没有窗口可关，跑完 num_episodes 自然结束
+
+    def sync(self):
+        pass
 
 # ==========================================
 # 🚀 部署主程序
@@ -549,9 +643,51 @@ def main(args):
     
     # 🔗 统一入口：读 xml -> 应用相机镜像(global_cam_body.x = 1.0) -> 建 data -> 契约自检。
     #    采集端 auto_grasp_screwdriver2.py 调用的是同一个函数。任何一端漏做都不可能了。
-    global RIDX
+    global RIDX, DEBUG_CONTACT, DEBUG_CONTACT_EVERY
+    DEBUG_CONTACT = bool(getattr(args, "debug_contact", False))
+    DEBUG_CONTACT_EVERY = max(1, int(getattr(args, "debug_every", 20)))
     model, data, RIDX = rspec.load_scene()
+
+    # ==========================================================================
+    # 🔧 隐藏所有坐标系标记 + 审计场上是否真有能碰撞的球体
+    #
+    #   ee_axis_* / screw_axis_* / sponge_axis_* 都是 contype=0 conaffinity=0
+    #   的圆柱，本来就不参与碰撞；而且它们在 group 1，rspec 的 vopt 已经把
+    #   group 1 关掉了，所以策略看到的图像里从来没有它们 —— 这里把 alpha 清零
+    #   只是让 viewer 里也干净，不会造成任何 sim 或分布上的改变。
+    # ==========================================================================
+    _hidden_axes = []
+    for _g in range(model.ngeom):
+        _n = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, _g) or ""
+        if "_axis_" in _n:
+            model.geom_rgba[_g][3] = 0.0          # 视觉上抹掉
+            model.geom_contype[_g] = 0            # 双保险：确保不参与碰撞
+            model.geom_conaffinity[_g] = 0
+            _hidden_axes.append(_n)
+
+    # site 在 MuJoCo 里默认就是球体，`ee_site` 就是你在 viewer 里看到的那个小球。
+    # site 不参与任何物理，把 alpha 清零纯粹是视觉处理。
+    for _s in range(model.nsite):
+        model.site_rgba[_s][3] = 0.0
+
+    _spheres = [
+        (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, _g) or f"geom#{_g}")
+        for _g in range(model.ngeom)
+        if model.geom_type[_g] == mujoco.mjtGeom.mjGEOM_SPHERE
+        and (model.geom_contype[_g] or model.geom_conaffinity[_g])
+    ]
+    print(f"🔧 已隐藏 {len(_hidden_axes)} 个坐标系标记: {', '.join(_hidden_axes) if _hidden_axes else '(无)'}")
+    print(f"🔧 TCP 指示小球已从 viewer 装饰层移除")
+    if _spheres:
+        print(f"🚨 场景中仍存在会碰撞的球体 geom: {_spheres}")
+    else:
+        print(f"✅ 审计结果：整个模型里没有任何会参与碰撞的球体 geom —— "
+              f"末端小球不可能是下抓受阻的原因")
+
     rspec.check_prompt(PROMPT)   # prompt 不在训练指令集里就当场报错，而不是安静地喂 OOD
+
+    # 📸 [新增] 记录出厂状态快照。必须在任何回合开跑之前，此刻 data 还是干净的。
+    capture_reset_snapshot(model, data)
 
     renderer_rgb = rspec.make_renderer(model)
     policy = websocket_client_policy.WebsocketClientPolicy(host=args.host, port=args.port)
@@ -616,10 +752,15 @@ def main(args):
     fixed_targets = None
     if args.fixed_eval:
         print("🔒 [固定评测模式] 开启！各工况将使用完全相同的初始位置。")
-        # 🌟 新桌面中心点的绝对静止坐标
-        absolute_fixed_xy = (0.40, 0.0) 
+        # 🔧 [已改] 原为写死的 (0.40, 0.0)：朝向固定为 90° 后杆身沿世界 X、半长 0.10，
+        #    刀尖正好落在 x=0.30，即绿区与桌沿的边界线上，属于压线摆放。
+        #    改成取可行域中点，位置域一旦调整这里自动跟随，不会再各写一份。
+        _dom = rspec.spawn_domain(model)
+        absolute_fixed_xy = (round(float(np.mean(_dom["x"])), 3),
+                             round(float(np.mean(_dom["y"])), 3))
         fixed_targets = [absolute_fixed_xy for _ in range(args.num_episodes)]
-        print(f"📌 [绝对静止] 螺丝刀坐标已焊死在: X={absolute_fixed_xy[0]}, Y={absolute_fixed_xy[1]}")
+        print(f"📌 [绝对静止] 螺丝刀坐标已焊死在: X={absolute_fixed_xy[0]}, Y={absolute_fixed_xy[1]}"
+              f"（可行域 x∈[{_dom['x'][0]:.3f}, {_dom['x'][1]:.3f}] 的中点）")
 
     # 🔧 [新增] 首个动作块自检只打印一次
     _printed_chunk_diag = False
@@ -627,7 +768,36 @@ def main(args):
     # 🌟 完美复刻数据采集时的画面屏蔽逻辑，仅对相机的 renderer 生效
     vopt = rspec.make_scene_option()   # 🔗 与采集端同一份屏蔽选项
 
-    with mujoco.viewer.launch_passive(model, data) as viewer:
+    # 🖥️ [新增] 无窗口模式：默认开窗口（调试友好），批量跑加 --headless
+    if args.headless:
+        print("🖥️  [无窗口模式] 不开 viewer，省掉每步的 sync 与帧率节流。")
+        viewer_ctx = _NullViewer()
+    else:
+        viewer_ctx = mujoco.viewer.launch_passive(model, data)
+
+    # 🎬 [新增] 录像降采样。策略步率 = 1/(SIM_SUBSTEPS_PER_ACTION * timestep)，
+    #    对 20 substeps @ 0.001s 就是 50 Hz。每 VIDEO_EVERY 步存一帧，视频按
+    #    50/VIDEO_EVERY 的 fps 写出去，播放速度正好是实时。
+    #    过去固定写 10.0 fps 而每步都存，等于把视频拉成了 5 倍慢放。
+    policy_hz = 1.0 / (SIM_SUBSTEPS_PER_ACTION * model.opt.timestep)
+    VIDEO_EVERY = max(1, int(args.video_every))
+    VIDEO_FPS = policy_hz / VIDEO_EVERY
+    RECORD_VIDEO = args.video != "none"
+    if RECORD_VIDEO:
+        print(f"🎬 录像：每 {VIDEO_EVERY} 个策略步存一帧 -> {VIDEO_FPS:.1f} fps（实时速度）"
+              f"，保存策略 = {args.video}")
+    else:
+        print("🎬 录像：已关闭（--video none），录制渲染开销完全省掉。")
+
+    with viewer_ctx as viewer:
+        # 🔧 launch_passive 用的是默认 viewer.opt（sitegroup 全开），所以 ee_site
+        #    会以默认球体形状画出来 —— 这就是那个"末端小球"。
+        #    这里把 viewer 的可视化选项对齐到 rspec 给 offscreen renderer 的那份，
+        #    让你在 viewer 里看到的就是策略实际看到的画面。
+        viewer.opt.sitegroup[:] = 0
+        viewer.opt.geomgroup[1] = 0
+        viewer.opt.geomgroup[2] = 0
+
         for cfg in test_queue:
             # 🔄 目录名不带时间戳，同一个工况永远落在同一个目录，才能续跑
             run_folder_name = f"run_{cfg['mode']}_Case{cfg['case_id']}_{cfg['tag_obs']}_{cfg['tag_apf']}_{cfg['tag_cont']}"
@@ -723,8 +893,11 @@ def main(args):
                             print("-" * 70 + "\n")
                     
                     # 🌟 给录像相机也应用 vopt，保证输出的视频是干净无干扰的
-                    renderer_rgb.update_scene(data, camera=record_cam, scene_option=vopt) 
-                    video_frames.append(renderer_rgb.render())
+                    # 🎬 [修改] 降采样：只在采样点渲染。render() 是只读的，
+                    #    跳过它不影响任何仿真状态。
+                    if RECORD_VIDEO and step_counter % VIDEO_EVERY == 0:
+                        renderer_rgb.update_scene(data, camera=record_cam, scene_option=vopt)
+                        video_frames.append(renderer_rgb.render())
 
                     current_action = action_chunk_cache[step_counter % 8]
                     # 🔧 [已修复] 夹爪指令在主循环里统一解码一次，供各分支和成功判定共用
@@ -788,6 +961,17 @@ def main(args):
                         current_tau = data.qfrc_actuator[:6].copy()
                         episode_taus.append(np.max(np.abs(current_tau)))
                     
+                    # 🩺 [新增] 接触诊断：只打印，不改任何状态
+                    if DEBUG_CONTACT and step_counter % DEBUG_CONTACT_EVERY == 0:
+                        _tcp_z = data.site_xpos[tcp_id][2]
+                        print(
+                            f"   🩺 step={step_counter:4d}  tcp_z={_tcp_z:.4f} "
+                            f"(离桌面 {_tcp_z - 0.732:+.4f})  |f|={max_f_norm_step:7.3f}N  "
+                            f"虚拟墙={'ON ' if is_contact_ui else 'off'}  "
+                            f"夹爪={grip_cmd:+.4f}  ncon={data.ncon}"
+                        )
+                        dump_contacts(model, data, step_counter, tcp_id, valid_collision_bodies)
+
                     final_step_q_dot = current_ctrl[:6] - data.qpos[:6].copy()
 
                     episode_data["steps"].append(step_counter)
@@ -810,24 +994,24 @@ def main(args):
                     episode_data["q_pos_vla"].append(raw_q_pos_vla)
                     episode_data["q_dot_vla"].append(raw_q_dot_vla)
 
-                    viewer.user_scn.ngeom = 0 
-                    if cfg["apf"]:
-                        if cfg["obs"] and obs_capsule:
-                            mujoco.mjv_initGeom(viewer.user_scn.geoms[viewer.user_scn.ngeom], mujoco.mjtGeom.mjGEOM_CAPSULE, np.zeros(3), np.zeros(3), np.zeros(9), [1, 1, 0, 0.3])
-                            mujoco.mjv_connector(viewer.user_scn.geoms[viewer.user_scn.ngeom], mujoco.mjtGeom.mjGEOM_CAPSULE, obs_capsule["r"], obs_capsule["p1"], obs_capsule["p2"])
-                            viewer.user_scn.ngeom += 1
-                        for cap in active_capsules:
-                            color = [1, 0, 0, 0.5] if is_apf_active else [0, 0.5, 1, 0.3]
-                            mujoco.mjv_initGeom(viewer.user_scn.geoms[viewer.user_scn.ngeom], mujoco.mjtGeom.mjGEOM_CAPSULE, np.zeros(3), np.zeros(3), np.zeros(9), color)
-                            mujoco.mjv_connector(viewer.user_scn.geoms[viewer.user_scn.ngeom], mujoco.mjtGeom.mjGEOM_CAPSULE, cap["r"], cap["p1"], cap["p2"])
-                            viewer.user_scn.ngeom += 1
+                    # 🖥️ [修改] 无窗口时没有装饰层可画，整段跳过
+                    if viewer.user_scn is not None:
+                        viewer.user_scn.ngeom = 0 
+                        if cfg["apf"]:
+                            if cfg["obs"] and obs_capsule:
+                                mujoco.mjv_initGeom(viewer.user_scn.geoms[viewer.user_scn.ngeom], mujoco.mjtGeom.mjGEOM_CAPSULE, np.zeros(3), np.zeros(3), np.zeros(9), [1, 1, 0, 0.3])
+                                mujoco.mjv_connector(viewer.user_scn.geoms[viewer.user_scn.ngeom], mujoco.mjtGeom.mjGEOM_CAPSULE, obs_capsule["r"], obs_capsule["p1"], obs_capsule["p2"])
+                                viewer.user_scn.ngeom += 1
+                            for cap in active_capsules:
+                                color = [1, 0, 0, 0.5] if is_apf_active else [0, 0.5, 1, 0.3]
+                                mujoco.mjv_initGeom(viewer.user_scn.geoms[viewer.user_scn.ngeom], mujoco.mjtGeom.mjGEOM_CAPSULE, np.zeros(3), np.zeros(3), np.zeros(9), color)
+                                mujoco.mjv_connector(viewer.user_scn.geoms[viewer.user_scn.ngeom], mujoco.mjtGeom.mjGEOM_CAPSULE, cap["r"], cap["p1"], cap["p2"])
+                                viewer.user_scn.ngeom += 1
                             
-                    if cfg["contact"]:
-                        c_color = [1, 0, 0, 0.8] if is_contact_ui else [0, 1, 0, 0.2]
-                        # 🌟 渲染修正：解决 Sphere (球体) 由于无旋转矩阵导致的全黑无光照问题
-                        mujoco.mjv_initGeom(viewer.user_scn.geoms[viewer.user_scn.ngeom], mujoco.mjtGeom.mjGEOM_SPHERE, [0.015, 0.015, 0.015], np.zeros(3), np.eye(3).flatten(), c_color)
-                        viewer.user_scn.geoms[viewer.user_scn.ngeom].pos = data.site_xpos[tcp_id].copy()
-                        viewer.user_scn.ngeom += 1
+                    # 🔧 [已移除] 原本这里会在 TCP 上画一个半径 0.015 的虚拟墙指示小球
+                    #    （viewer.user_scn 装饰几何，红=接触/绿=空闲）。
+                    #    它只存在于渲染场景 mjvScene 里，不进 MjModel/MjData，
+                    #    MuJoCo 的碰撞检测根本看不到它 —— 为了排除干扰先删掉。
 
                     if cfg["obs"] and pillar_body_id != -1:
                         if data.xmat[pillar_body_id].reshape(3, 3)[2, 2] < 0.9: episode_col = True
@@ -886,7 +1070,11 @@ def main(args):
                     succ_impulses.append(ep_true_impulse)
                 
                 save_folder = os.path.join(base_record_dir, "success" if is_success else "fail")
-                save_episode_video(video_frames, save_folder, episode + 1)
+                # 🎬 [修改] --video fail 时只留失败回合的视频（用于事后归因），
+                #    成功回合的帧直接丢掉，省磁盘。
+                if RECORD_VIDEO and (args.video == "all" or not is_success):
+                    save_episode_video(video_frames, save_folder, episode + 1, fps=VIDEO_FPS)
+                os.makedirs(save_folder, exist_ok=True)
                 
                 data_filename = os.path.join(save_folder, f"data_ep_{episode+1:03d}.npz")
                 np.savez(data_filename, 
@@ -978,6 +1166,15 @@ if __name__ == "__main__":
     p.add_argument("--case", default=0, type=int, help="指定运行某个工况(1-8)。如果为0则按顺序运行全部8个工况。")
     p.add_argument("--fresh", action="store_true", help="忽略已有进度，从第 1 回合重新开始（默认自动续跑）")
     p.add_argument("--fixed_eval", action="store_true", help="启用严格对照模式（每次生成的物体位置序列固定）")
+    p.add_argument("--debug_contact", action="store_true", help="打印末端高度/接触对/接触力，用于定位下抓被顶住的原因（不改物理）")
+    p.add_argument("--debug_every", default=20, type=int, help="接触诊断的打印间隔（策略步），默认 20")
+
+    # ⚡ 提速相关
+    p.add_argument("--headless", action="store_true", help="不开 viewer 窗口，批量跑消融时用（默认开窗口）")
+    p.add_argument("--video", type=str, default="all", choices=["all", "fail", "none"],
+                   help="录像保存策略: all=全存(默认), fail=只存失败回合(省磁盘), none=完全不录(省渲染)")
+    p.add_argument("--video_every", default=5, type=int,
+                   help="每隔几个策略步存一帧录像，默认 5（50Hz -> 10fps 实时）。设 1 恢复逐步录制")
     
     p.add_argument("--control_mode", type=str, default="both", choices=["admittance", "impedance", "both"], help="选择末端力控策略: admittance, impedance 或 both (自动去重执行完备的12组)")
     

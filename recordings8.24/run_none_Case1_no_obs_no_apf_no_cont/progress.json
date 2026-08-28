@@ -1,0 +1,414 @@
+{
+ "signature": {
+  "version": 2,
+  "case_id": 1,
+  "mode": "none",
+  "obs": false,
+  "apf": false,
+  "contact": false,
+  "fixed_eval": false
+ },
+ "updated_at": "2026-08-24 15:45:17",
+ "episodes": [
+  {
+   "episode": 1,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.18945417899083,
+   "peak_f": 81.56124313226785,
+   "impulse": 401.4092887377431
+  },
+  {
+   "episode": 2,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.08747460893877,
+   "peak_f": 141.67754552635589,
+   "impulse": 339.1995457331285
+  },
+  {
+   "episode": 3,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.8080782275774,
+   "peak_f": 26.00639448263681,
+   "impulse": 8.028377011034072
+  },
+  {
+   "episode": 4,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.05033783071051,
+   "peak_f": 51.97445799534908,
+   "impulse": 5.892326122361288
+  },
+  {
+   "episode": 5,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.21567073907749,
+   "peak_f": 80.89156025417503,
+   "impulse": 9.136054401337121
+  },
+  {
+   "episode": 6,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.11140451792917,
+   "peak_f": 106.08777418891287,
+   "impulse": 89.84932522052853
+  },
+  {
+   "episode": 7,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.85426011825399,
+   "peak_f": 71.71896478059828,
+   "impulse": 89.32161433485132
+  },
+  {
+   "episode": 8,
+   "success": false,
+   "collision": false,
+   "max_tau": 57.98130264358916,
+   "peak_f": 32.633740766983465,
+   "impulse": 9.119339793190324
+  },
+  {
+   "episode": 9,
+   "success": false,
+   "collision": false,
+   "max_tau": 57.90481547195568,
+   "peak_f": 69.78020163730461,
+   "impulse": 311.161643620846
+  },
+  {
+   "episode": 10,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.93342684305242,
+   "peak_f": 51.62706366533613,
+   "impulse": 64.44204481834677
+  },
+  {
+   "episode": 11,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.75836963650023,
+   "peak_f": 33.06996858764612,
+   "impulse": 11.439204671724006
+  },
+  {
+   "episode": 12,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.51118231463163,
+   "peak_f": 86.67262391248231,
+   "impulse": 8.549713686403164
+  },
+  {
+   "episode": 13,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.72870250780144,
+   "peak_f": 57.05351980492922,
+   "impulse": 120.36055440899577
+  },
+  {
+   "episode": 14,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.75892189365068,
+   "peak_f": 31.283972210523515,
+   "impulse": 10.406756918098026
+  },
+  {
+   "episode": 15,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.29595446326911,
+   "peak_f": 65.0945630634175,
+   "impulse": 379.43733806870137
+  },
+  {
+   "episode": 16,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.85923778315245,
+   "peak_f": 92.71637632576545,
+   "impulse": 97.59548942318352
+  },
+  {
+   "episode": 17,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.027137197647,
+   "peak_f": 42.71804302814683,
+   "impulse": 326.98056617816206
+  },
+  {
+   "episode": 18,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.155292055353456,
+   "peak_f": 153.48845521424377,
+   "impulse": 133.66254669592107
+  },
+  {
+   "episode": 19,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.12367726890729,
+   "peak_f": 18.228668579257267,
+   "impulse": 6.931480699407468
+  },
+  {
+   "episode": 20,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.99347516392984,
+   "peak_f": 84.58135743194873,
+   "impulse": 123.82161171877297
+  },
+  {
+   "episode": 21,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.81559408620131,
+   "peak_f": 32.739506111524676,
+   "impulse": 5.12694497393434
+  },
+  {
+   "episode": 22,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.74289322201214,
+   "peak_f": 36.40917532112807,
+   "impulse": 25.755201001567354
+  },
+  {
+   "episode": 23,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.09804545509967,
+   "peak_f": 69.21303441574192,
+   "impulse": 484.1568267117689
+  },
+  {
+   "episode": 24,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.77940932156131,
+   "peak_f": 139.50425547103893,
+   "impulse": 56.304032628628015
+  },
+  {
+   "episode": 25,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.92445103396439,
+   "peak_f": 35.55806092806255,
+   "impulse": 5.6605641032240985
+  },
+  {
+   "episode": 26,
+   "success": false,
+   "collision": false,
+   "max_tau": 57.659396464692115,
+   "peak_f": 52.05629585880082,
+   "impulse": 16.44152364490928
+  },
+  {
+   "episode": 27,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.00841551071103,
+   "peak_f": 53.30913858598538,
+   "impulse": 140.61359416282232
+  },
+  {
+   "episode": 28,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.640140421596385,
+   "peak_f": 71.9535208654471,
+   "impulse": 239.9617946047605
+  },
+  {
+   "episode": 29,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.71134684674609,
+   "peak_f": 111.56327562640045,
+   "impulse": 9.808893584067084
+  },
+  {
+   "episode": 30,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.31540951681724,
+   "peak_f": 26.447570513584278,
+   "impulse": 8.145131100162047
+  },
+  {
+   "episode": 31,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.089684059720824,
+   "peak_f": 117.89796296807091,
+   "impulse": 183.79965111057396
+  },
+  {
+   "episode": 32,
+   "success": false,
+   "collision": false,
+   "max_tau": 57.977241933393096,
+   "peak_f": 91.04206964469414,
+   "impulse": 349.62002347473685
+  },
+  {
+   "episode": 33,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.19502927858448,
+   "peak_f": 57.56841997050755,
+   "impulse": 8.098731661656618
+  },
+  {
+   "episode": 34,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.557364745712746,
+   "peak_f": 33.80189023402276,
+   "impulse": 6.947854942529346
+  },
+  {
+   "episode": 35,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.077699177519136,
+   "peak_f": 34.8124485297395,
+   "impulse": 12.140112279464269
+  },
+  {
+   "episode": 36,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.953417476204635,
+   "peak_f": 65.33382063261051,
+   "impulse": 5.180481489994403
+  },
+  {
+   "episode": 37,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.190452042817455,
+   "peak_f": 22.920455070191746,
+   "impulse": 5.218399562788906
+  },
+  {
+   "episode": 38,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.60546531912655,
+   "peak_f": 66.38296435133756,
+   "impulse": 118.27747552256493
+  },
+  {
+   "episode": 39,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.0345854440277,
+   "peak_f": 79.4861959113806,
+   "impulse": 429.1077146614038
+  },
+  {
+   "episode": 40,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.55417213641512,
+   "peak_f": 27.397214860158495,
+   "impulse": 6.7454969871999255
+  },
+  {
+   "episode": 41,
+   "success": false,
+   "collision": false,
+   "max_tau": 57.85780726370176,
+   "peak_f": 61.28323948882465,
+   "impulse": 14.36753251455076
+  },
+  {
+   "episode": 42,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.76965842899384,
+   "peak_f": 43.583807500164454,
+   "impulse": 7.085867341403259
+  },
+  {
+   "episode": 43,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.003293953185015,
+   "peak_f": 129.44875939856016,
+   "impulse": 534.8033019369084
+  },
+  {
+   "episode": 44,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.103889193469875,
+   "peak_f": 32.28635060413535,
+   "impulse": 12.766021025547012
+  },
+  {
+   "episode": 45,
+   "success": false,
+   "collision": false,
+   "max_tau": 57.54422744840543,
+   "peak_f": 92.97356150448965,
+   "impulse": 18.8699989942284
+  },
+  {
+   "episode": 46,
+   "success": true,
+   "collision": false,
+   "max_tau": 57.80607869802772,
+   "peak_f": 122.36734450395873,
+   "impulse": 43.53619499908005
+  },
+  {
+   "episode": 47,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.01780938846725,
+   "peak_f": 114.74092303689385,
+   "impulse": 36.494047256327626
+  },
+  {
+   "episode": 48,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.059461674633155,
+   "peak_f": 55.86875135428644,
+   "impulse": 156.66503291606762
+  },
+  {
+   "episode": 49,
+   "success": true,
+   "collision": false,
+   "max_tau": 58.34267774214509,
+   "peak_f": 27.34316525173284,
+   "impulse": 9.778293123775493
+  },
+  {
+   "episode": 50,
+   "success": false,
+   "collision": false,
+   "max_tau": 58.35231395029456,
+   "peak_f": 103.20805550228347,
+   "impulse": 35.9499551166229
+  }
+ ]
+}

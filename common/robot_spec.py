@@ -110,6 +110,157 @@ GLOBAL_CAM_BODY = "global_cam_body"
 STATE_DIM = 8      # 6 臂关节 + 2 夹爪
 ACTION_DIM = 8
 
+TARGET_ZONE_GEOM = "zone_target"    # 桌面绿色区域，螺丝刀的合法摆放范围
+
+
+# ==============================================================================
+# 螺丝刀初始位姿分布
+#
+#   历史教训（与夹爪那次同源）：采集端在 auto_grasp_screwdriver.py 里做拒绝采样，
+#   部署端在 deploy_screwdriver_client.py 的 reset_scene 里另写一段 uniform，
+#   两边的区间对不上也不会报错 —— 训练时螺丝刀永远在 x∈[0.40,0.44]，
+#   评测时却能出现在 x=0.38，策略看到的第一帧直接是分布外。
+#
+#   现在两端都从这里取：区间、朝向、抖动幅度只定义一次。
+#
+#   朝向约定：杆身 = 物体 local Y 轴（见采集端 shaft_dir = obj_mat @ [0,1,0]）。
+#   基准朝向来自场景 xml 的 body quat，不在代码里写死 —— xml 改了这里自动跟上。
+# ==============================================================================
+OBJECT_SHAFT_LOCAL_AXIS = np.array([0.0, 1.0, 0.0])   # 杆身在物体自身坐标系里的方向
+OBJECT_SHAFT_HALF_LEN = 0.10                          # 杆身半长，用于"两端都要在绿区内"
+
+SPAWN_X_RANGE = (0.35, 0.44)     # 请求区间；实际可行域还要与绿区边界求交
+SPAWN_Y_RANGE = (-0.09, 0.09)
+SPAWN_DROP_Z = 0.80              # 抛落高度，靠自由落体沉降到桌面
+
+# 绕世界 z 轴相对基准朝向的随机幅度（弧度）。
+# 0 = 朝向完全不随机。改这个值就是换实验条件，部署端的 progress.json 会因此失效。
+SCREW_YAW_JITTER = 0.0
+
+_SPAWN_DOMAIN_CACHE: dict = {}
+
+
+def screw_base_yaw(model) -> float:
+    """场景 xml 里螺丝刀的基准偏航角（弧度）。"""
+    bq = model.body(OBJECT_BODY).quat        # [w, x, y, z]
+    return 2.0 * float(np.arctan2(float(bq[3]), float(bq[0])))
+
+
+def yaw_to_quat(yaw: float) -> np.ndarray:
+    """绕世界 z 轴的偏航角 -> 四元数 [w, x, y, z]。"""
+    return np.array([np.cos(yaw / 2.0), 0.0, 0.0, np.sin(yaw / 2.0)])
+
+
+def target_zone_bounds(model) -> tuple[float, float, float, float]:
+    """绿区在世界系下的 (x_min, x_max, y_min, y_max)，直接从场景几何体读。
+
+    不硬编码 0.30/0.60 这类数字：桌子挪了、绿区改大小了，两端会一起跟上。
+    """
+    gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, TARGET_ZONE_GEOM)
+    if gid == -1:
+        raise RuntimeError(f"场景里找不到 geom '{TARGET_ZONE_GEOM}'，无法确定螺丝刀的合法摆放范围。")
+    d = mujoco.MjData(model)
+    mujoco.mj_forward(model, d)
+    if not np.allclose(d.geom_xmat[gid].reshape(3, 3), np.eye(3), atol=1e-6):
+        raise RuntimeError(
+            f"geom '{TARGET_ZONE_GEOM}' 不是轴对齐的，下面按 AABB 求可行域的推导不再成立。"
+        )
+    c, s = d.geom_xpos[gid], model.geom_size[gid]
+    return float(c[0] - s[0]), float(c[0] + s[0]), float(c[1] - s[1]), float(c[1] + s[1])
+
+
+def _feasible_center_range(req, zone_lo, zone_hi, half_extent, label):
+    """杆身两端都落在绿区内 <=> 中心落在收缩后的区间里。
+
+    解析求交，不用拒绝采样 —— 否则采样域会被静默压窄：请求 x∈[0.35,0.44]，
+    朝向固定为 90° 后只有 x≥0.40 的样本能通过，一半以上抽样被丢掉，日志里看不出异常。
+    """
+    lo = max(req[0], zone_lo + abs(half_extent))
+    hi = min(req[1], zone_hi - abs(half_extent))
+    if lo > hi:
+        raise RuntimeError(
+            f"{label} 采样域为空：请求 [{req[0]:.3f}, {req[1]:.3f}]，但朝向固定后中心必须落在 "
+            f"[{zone_lo + abs(half_extent):.3f}, {zone_hi - abs(half_extent):.3f}] "
+            f"才能让杆身两端都留在绿区内。请调整 SPAWN_X_RANGE / SPAWN_Y_RANGE。"
+        )
+    return lo, hi
+
+
+def spawn_domain(model, verbose: bool = False) -> dict:
+    """朝向不随机时的位置可行域（解析解，按 model 缓存）。
+
+    返回 {"yaw", "x", "y", "shaft_dir"}；x / y 都是 (lo, hi) 闭区间。
+    """
+    key = id(model)
+    if key not in _SPAWN_DOMAIN_CACHE:
+        yaw = screw_base_yaw(model)
+        # 物体绕 z 转 yaw 后，local Y 轴的世界方向
+        ux, uy = -np.sin(yaw), np.cos(yaw)
+        zx_lo, zx_hi, zy_lo, zy_hi = target_zone_bounds(model)
+        dom = {
+            "yaw": yaw,
+            "shaft_dir": np.array([ux, uy, 0.0]),
+            "x": _feasible_center_range(
+                SPAWN_X_RANGE, zx_lo, zx_hi, OBJECT_SHAFT_HALF_LEN * ux, "x"),
+            "y": _feasible_center_range(
+                SPAWN_Y_RANGE, zy_lo, zy_hi, OBJECT_SHAFT_HALF_LEN * uy, "y"),
+        }
+        _SPAWN_DOMAIN_CACHE[key] = dom
+        if verbose:
+            print(
+                f"🎯 螺丝刀初始位姿契约 | 基准 yaw={np.degrees(yaw):.1f}° "
+                f"抖动 ±{np.degrees(SCREW_YAW_JITTER):.1f}° | "
+                f"位置域 x∈[{dom['x'][0]:.3f}, {dom['x'][1]:.3f}] "
+                f"y∈[{dom['y'][0]:.3f}, {dom['y'][1]:.3f}]"
+            )
+    return _SPAWN_DOMAIN_CACHE[key]
+
+
+def sample_screw_spawn(model, rng=None) -> tuple[float, float, float]:
+    """采样一次螺丝刀初始位姿，返回 (x, y, yaw)。两端调的是同一个函数。
+
+    SCREW_YAW_JITTER = 0 时朝向固定，位置在解析可行域内均匀采样；
+    非零时朝向与位置耦合，退回拒绝采样（带次数上限，绝不静默死循环）。
+    """
+    rng = rng if rng is not None else np.random.default_rng()
+    dom = spawn_domain(model)
+
+    if SCREW_YAW_JITTER <= 0.0:
+        return (float(rng.uniform(*dom["x"])),
+                float(rng.uniform(*dom["y"])),
+                float(dom["yaw"]))
+
+    zx_lo, zx_hi, zy_lo, zy_hi = target_zone_bounds(model)
+    L = OBJECT_SHAFT_HALF_LEN
+    MAX_TRIES = 5000
+    for _ in range(MAX_TRIES):
+        x = float(rng.uniform(*SPAWN_X_RANGE))
+        y = float(rng.uniform(*SPAWN_Y_RANGE))
+        yaw = float(dom["yaw"] + rng.uniform(-SCREW_YAW_JITTER, SCREW_YAW_JITTER))
+        ux, uy = -np.sin(yaw), np.cos(yaw)
+        if (zx_lo <= x + L * ux <= zx_hi and zx_lo <= x - L * ux <= zx_hi and
+                zy_lo <= y + L * uy <= zy_hi and zy_lo <= y - L * uy <= zy_hi):
+            return x, y, yaw
+    raise RuntimeError(
+        f"拒绝采样 {MAX_TRIES} 次仍未找到合法摆放：SPAWN_X_RANGE={SPAWN_X_RANGE} "
+        f"SPAWN_Y_RANGE={SPAWN_Y_RANGE} SCREW_YAW_JITTER={np.degrees(SCREW_YAW_JITTER):.1f}° "
+        f"与绿区约束不相容。"
+    )
+
+
+def set_screw_pose(model, data, x: float, y: float, yaw: float, z: float | None = None) -> None:
+    """把螺丝刀摆到指定位姿，并清零其自由关节速度。
+
+    不清速度的话，上一回合的残余动量会让它是"被甩出去"而不是"被放下"。
+    """
+    jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, OBJECT_FREEJOINT)
+    if jid == -1:
+        raise RuntimeError(f"场景里找不到自由关节 '{OBJECT_FREEJOINT}'。")
+    adr, dof = model.jnt_qposadr[jid], model.jnt_dofadr[jid]
+    data.qpos[adr:adr + 3] = [x, y, SPAWN_DROP_Z if z is None else z]
+    data.qpos[adr + 3:adr + 7] = yaw_to_quat(yaw)
+    data.qvel[dof:dof + 6] = 0.0
+
 
 # ==============================================================================
 # 相机
@@ -306,6 +457,13 @@ def assert_contract(model, idx: RobotIndices | None = None, verbose: bool = True
             f"臂+夹爪在 qpos 里的地址是 {idx.state_qpos_adr.tolist()}，不是 0..7。"
             f"任何 data.qpos[:8] 的写法都会错位，必须改用 robot_spec.get_state()。"
         )
+
+    # 6. 螺丝刀初始位姿的采样域必须非空 —— 宁可启动即失败，也不要跑到第一个
+    #    回合才在 reset 里抛错，或者更糟：静默地把物体摆到绿区外/桌沿外。
+    try:
+        spawn_domain(model, verbose=verbose)
+    except RuntimeError as e:
+        problems.append(str(e))
 
     if problems:
         raise RuntimeError(

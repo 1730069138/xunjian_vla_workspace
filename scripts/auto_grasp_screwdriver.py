@@ -42,12 +42,14 @@ OBJECT_BODY = rspec.OBJECT_BODY
 OBJECT_FREEJOINT = rspec.OBJECT_FREEJOINT
 STORAGE_BOX_BODY = rspec.STORAGE_BOX_BODY
 
-# 随机初始摆放的机械臂可达范围 (会通过拒绝采样进一步限制在绿色区域内)
-SPAWN_X_RANGE = (0.35, 0.44)
-SPAWN_Y_RANGE = (-0.09, 0.09)
-SPAWN_DROP_Z = 0.80
-# 随机摆放时，螺丝刀相对场景XML中的基准姿态，绕世界z轴最多偏转 ±该角度
-YAW_DELTA_MAX = np.radians(60.0)
+# 🔗 [已改] 螺丝刀初始位姿分布收进 robot_spec，与部署端 reset_scene 同源。
+#    过去两端各写一份区间，对不上也不报错：训练时螺丝刀只出现在 x∈[0.40,0.44]，
+#    评测时却能被摆到 x=0.38，策略看到的第一帧就是分布外。
+#    朝向随机幅度改这里：rspec.SCREW_YAW_JITTER（当前为 0，即朝向固定不随机）。
+SPAWN_X_RANGE = rspec.SPAWN_X_RANGE
+SPAWN_Y_RANGE = rspec.SPAWN_Y_RANGE
+SPAWN_DROP_Z = rspec.SPAWN_DROP_Z
+YAW_DELTA_MAX = rspec.SCREW_YAW_JITTER
 
 BASE_XY = np.array([0.13, 0.0])
 RELEASE_TILT_DEG = 45.0
@@ -324,35 +326,13 @@ def mat_tilted_toward(tilt_deg, lean_dir):
     return mat_from_approach(x_hint, z_approach)
 
 def randomize_object_pose(model, data, rng):
-    adr = model.joint(OBJECT_FREEJOINT).qposadr[0]
+    """🔗 [已改] 采样与摆放全部走 robot_spec，与部署端 reset_scene 是同一份实现。
 
-    GREEN_X_MIN, GREEN_X_MAX = 0.30, 0.60
-    GREEN_Y_MIN, GREEN_Y_MAX = -0.125, 0.125
-    L_HALF = 0.10
-
-    # 基准朝向取自场景XML里螺丝刀的 quat(当前为绕z +90°)，随机只在其 ±YAW_DELTA_MAX 内偏转
-    bq = model.body(OBJECT_BODY).quat            # [w, x, y, z]
-    base_yaw = 2.0 * np.arctan2(float(bq[3]), float(bq[0]))
-
-    while True:
-        x = rng.uniform(*SPAWN_X_RANGE)
-        y = rng.uniform(*SPAWN_Y_RANGE)
-        yaw = base_yaw + rng.uniform(-YAW_DELTA_MAX, YAW_DELTA_MAX)
-
-        # 杆身是物体的 local Y 轴(见 shaft_dir = obj_mat @ [0,1,0])，
-        # 绕z转 yaw 后其世界方向为 [-sin(yaw), cos(yaw)]，两端点须都落在绿区内
-        ux, uy = -np.sin(yaw), np.cos(yaw)
-        p1_x, p1_y = x + L_HALF * ux, y + L_HALF * uy
-        p2_x, p2_y = x - L_HALF * ux, y - L_HALF * uy
-
-        if (GREEN_X_MIN <= p1_x <= GREEN_X_MAX and
-            GREEN_X_MIN <= p2_x <= GREEN_X_MAX and
-            GREEN_Y_MIN <= p1_y <= GREEN_Y_MAX and
-            GREEN_Y_MIN <= p2_y <= GREEN_Y_MAX):
-            break
-
-    data.qpos[adr:adr + 3] = [x, y, SPAWN_DROP_Z]
-    data.qpos[adr + 3:adr + 7] = [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
+    绿区边界不再硬编码 0.30/0.60，改从场景里的 zone_target 几何体读；
+    朝向固定（SCREW_YAW_JITTER=0）时用解析可行域直接采样，不做拒绝采样。
+    """
+    x, y, yaw = rspec.sample_screw_spawn(model, rng)
+    rspec.set_screw_pose(model, data, x, y, yaw)
     return x, y, yaw
 
 def _rot_about_axis(axis, angle):

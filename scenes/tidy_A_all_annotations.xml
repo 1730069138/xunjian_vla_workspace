@@ -1,0 +1,300 @@
+<mujoco model="tidy_A_all_annotations">
+
+  <!-- 【A】全标注视图 = v10 本体，什么都没删。
+       色板 geom group 1、标注 site group 2，MuJoCo 默认可见，直接打开就能看全。
+       这是你平时调场景用的版本，也是真正要交给采集脚本的那个文件。 -->
+  <include file="../models/xunjian_arm.xml"/>
+
+  <option timestep="0.001" integrator="RK4" gravity="0 0 -9.81" />
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <global azimuth="140" elevation="-30"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.1 0.2 0.3" rgb2="0.2 0.3 0.4" width="300" height="300" mark="edge" markrgb="0.2 0.3 0.4"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true"/>
+
+    <texture name="tex_table_0" type="2d" file="../assets/textures/0.png"/>
+    <texture name="tex_table_1" type="2d" file="../assets/textures/1.png"/>
+    <texture name="tex_table_2" type="2d" file="../assets/textures/2.png"/>
+    <texture name="tex_table_3" type="2d" file="../assets/textures/3.png"/>
+    <texture name="tex_table_4" type="2d" file="../assets/textures/4.png"/>
+    <texture name="tex_table_5" type="2d" file="../assets/textures/5.png"/>
+    <texture name="tex_table_6" type="2d" file="../assets/textures/6.png"/>
+    <texture name="tex_table_7" type="2d" file="../assets/textures/7.png"/>
+    <texture name="tex_table_8" type="2d" file="../assets/textures/8.png"/>
+    <texture name="tex_table_9" type="2d" file="../assets/textures/9.png"/>
+    <texture name="tex_table_10" type="2d" file="../assets/textures/10.png"/>
+
+    <material name="mat_table_0" texture="tex_table_0" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_1" texture="tex_table_1" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_2" texture="tex_table_2" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_3" texture="tex_table_3" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_4" texture="tex_table_4" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_5" texture="tex_table_5" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_6" texture="tex_table_6" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_7" texture="tex_table_7" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_8" texture="tex_table_8" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_9" texture="tex_table_9" specular="0.2" shininess="0.1"/>
+    <material name="mat_table_10" texture="tex_table_10" specular="0.2" shininess="0.1"/>
+
+    <!-- ==================== 巡检物体资产 ====================
+         视觉用原始扫描网格，碰撞用 primitive（胶囊/圆柱/长方体）。
+         GSO 自带的 32 个凸子网格没有使用：接触点数量太多，会让伺服频率下
+         的接触旋量累加变噪，也拖慢仿真。primitive 近似与 PACE 避障层的
+         胶囊体抽象 C_k 是同一套几何语义。
+         · · · · · · · · · · · · · · · · · · · · · · · · · · ·
+         本版本只保留螺丝刀，因此手电筒与万用表的 mesh / texture / material
+         全部删除（它们没有被任何 geom 引用，留着只会在加载时白读一遍磁盘；
+         万用表的 mm_panel.png / mm_case.png 目前还没做出来，删掉正好避免
+         加载报错）。需要恢复多物体版本时，从 tidy v1 里把这几行拷回来即可。
+         · · · · · · · · · · · · · · · · · · · · · · · · · · ·
+         路径写法说明：
+         models/xunjian_arm.xml 设置了 meshdir="../assets/meshes/"，因此
+           mesh    file="../objects/X/a.obj"
+             -> scenes/../assets/meshes/../objects/X/a.obj = assets/objects/X/a.obj
+           texture file="../assets/objects/X/b.png"   (texturedir 为空)
+             -> scenes/../assets/objects/X/b.png       = assets/objects/X/b.png
+         两种写法不同，但落到磁盘上是同一个目录。实际文件放在：
+           assets/objects/screwdriver/model.obj  (GSO Craftsman_Grip_Screwdriver_Phillips_Cushion)
+           assets/objects/screwdriver/texture.png
+    -->
+    <mesh name="screwdriver_mesh" file="../objects/screwdriver/model.obj"/>
+    <texture name="screwdriver_tex" type="2d" file="../assets/objects/screwdriver/texture.png"/>
+    <material name="screwdriver_mat" texture="screwdriver_tex" specular="0.4" shininess="0.3"/>
+
+    <!-- 手电筒资产在 v2 里因为"只留螺丝刀"被删掉，v6 又需要它当障碍物，
+         所以原样加回来。对应磁盘文件（v1 就在用，不需要重新下载）：
+           assets/objects/flashlight/model.obj    (GSO HeavyDuty_Flashlight)
+           assets/objects/flashlight/texture.png -->
+    <mesh name="flashlight_mesh" file="../objects/flashlight/model.obj"/>
+    <texture name="flashlight_tex" type="2d" file="../assets/objects/flashlight/texture.png"/>
+    <material name="flashlight_mat" texture="flashlight_tex" specular="0.3" shininess="0.3"/>
+  </asset>
+
+  <!-- ==================== 渲染分组约定 ====================
+       目标：交互 viewer 里照常能看见所有标注，只有"录制"这一条路径把它们
+       剔掉。所以标注全部放在默认可见的分组里（MuJoCo 默认开 0/1/2、关
+       3/4/5，geom 与 site 是两套独立数组），由录制脚本主动关掉。
+
+         geom group 0 = 实体世界，录
+                        地面、桌面、桌腿、快递盒壁与底、面单胶带、
+                        螺丝刀视觉网格、手电筒视觉网格
+         geom group 1 = 标注色板（class zone）：红/绿/蓝三块，viewer 可见，不录
+         geom group 2 = 本文件不使用。留给 xunjian_arm.xml —— MuJoCo Menagerie
+                        的惯例是机械臂视觉网格用 group 2、碰撞用 group 3，
+                        所以录制脚本绝不能关 group 2，否则机械臂本体会一起消失
+         geom group 3 = 碰撞几何（class obj_collision），不录
+
+         site group 2 = 全部标注 site，viewer 可见，不录：
+                        handle_envelope / grasp_screwdriver / grasp_axis /
+                        grasp_jaw_a / grasp_jaw_b / tgt_screwdriver /
+                        obstacle_top / focus_point / lens_point
+
+       录制侧采用"减法"而不是白名单：只关掉确定属于本场景标注的分组，
+       其余保持默认。因为 xunjian_arm.xml 用了哪些分组本文件无从得知，
+       白名单一旦猜错就会把机械臂关掉。
+       夹爪末端的小球和坐标系轴不在本文件里，由录制配置统一处理：
+         · 末端小球通常是 xunjian_arm.xml 里的 site -> sitegroup 全置 0 即可
+         · 坐标系轴是 viewer 的显示选项 -> opt.frame = mjFRAME_NONE
+       具体配置见随附的 render_spec.py，建议整段并入 common/robot_spec.py，
+       采集与部署共用一份，避免又出现一次静默的分布不一致。
+  -->
+  <default>
+    <!-- 物体共用：视觉 geom 不参与碰撞、不贡献质量。group=0 -> 会被录进去 -->
+    <default class="obj_visual">
+      <geom group="0" contype="0" conaffinity="0" mass="0"/>
+    </default>
+    <!-- 碰撞 geom：condim=6 带滚动摩擦，防止圆柱形物体在台面上自发滚动 -->
+    <default class="obj_collision">
+      <geom group="3" condim="6" rgba="1 0 0 0" solref="0.004 1" solimp="0.95 0.99 0.001"/>
+    </default>
+    <!-- 区域色板：纯标注，group=1，viewer 默认可见，录制时由脚本关掉 -->
+    <default class="zone">
+      <geom type="box" contype="0" conaffinity="0" group="1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 .25" material="grid" condim="3"/>
+
+    <light directional="true" diffuse="0.6 0.6 0.6" specular="0.2 0.2 0.2" pos="0 0 4" dir="0 0 -1" castshadow="true"/>
+    <light directional="true" diffuse="0.3 0.3 0.3" specular="0 0 0" pos="0 0 4" dir="1 1 -1" castshadow="false"/>
+
+    <body name="table" pos="0.60 0 0">
+        <geom name="table_top" type="box" pos="0 0 0.712" size="0.3 0.6 0.02" material="mat_table_1" friction="1 0.05 0.0001" condim="3"/>
+
+        <!-- ==================== 三个区域（本版重新布局） ====================
+             红色障碍区居桌面正中（world y = 0，即桌体局部 y = 0），
+             绿色生成区与蓝色归位区关于 y=0 严格对称，三条带首尾相接：
+               绿色 y ∈ [-0.35, -0.05]   中心 -0.20   半宽 0.15
+               红色 y ∈ [-0.05,  0.05]   中心  0.00   半宽 0.05
+               蓝色 y ∈ [ 0.05,  0.35]   中心 +0.20   半宽 0.15
+             三条带 x 方向都是 world x ∈ [0.30, 0.60]（局部 x = -0.15，半宽 0.15）。
+             转移距离仍是 0.40 m（-0.20 -> +0.20），与 v1 完全一致，
+             避障层的 δ_max、chunk 步数等参数无需重标定。
+             绿/蓝半宽 0.15：蓝区正好容下快递盒的 0.09 半宽外廓，
+             绿区正好容下竖放（长轴沿 x）的螺丝刀。
+        -->
+        <geom class="zone" name="zone_target" pos="-0.15 -0.20 0.733" size="0.15 0.15 0.001" rgba="0 1 0 0.3"/>
+        <geom class="zone" name="zone_obstacle" pos="-0.15 0 0.733" size="0.15 0.05 0.001" rgba="1 0 0 0.3"/>
+        <geom class="zone" name="zone_storage" pos="-0.15 0.20 0.733" size="0.15 0.15 0.001" rgba="0 0 1 0.3"/>
+
+        <geom name="leg1" type="cylinder" pos="0.25 0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+        <geom name="leg2" type="cylinder" pos="0.25 -0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+        <geom name="leg3" type="cylinder" pos="-0.25 0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+        <geom name="leg4" type="cylinder" pos="-0.25 -0.55 0.346" size="0.02 0.346" rgba="0.2 0.2 0.2 1"/>
+    </body>
+
+    <!-- ==================== 归位目标：快递盒 ====================
+         原来的浅蓝色平垫 pad_screwdriver 已删除，换成一个真实容器。
+         盒体是 static body（没有 freejoint）：被机械臂或掉落的螺丝刀撞到时
+         不会滑走，成功判据的目标坐标因此是常量，不需要每帧去读盒体位姿。
+         几何（世界系）：
+           中心 (0.45, 0.20)，与螺丝刀生成位 x 对齐 -> 转移仍是纯 y 平移 0.40 m
+           外廓 x ∈ [0.30, 0.60]，y ∈ [0.11, 0.29]，完整落在蓝区内
+           内腔 x ∈ [0.305, 0.595] (0.290 m)，y ∈ [0.115, 0.285] (0.170 m)
+             螺丝刀全长 0.246 m、手柄直径 0.035 m，横放进去四周都有余量
+           内底面 z = 0.740，侧壁顶 z = 0.790（壁高 50 mm）
+         成功判据请直接读 site tgt_screwdriver 的坐标。
+    -->
+    <body name="delivery_box" pos="0.45 0.20 0.734">
+      <geom name="dbox_bottom" type="box" pos="0 0 0.003" size="0.150 0.090 0.003"
+            rgba="0.72 0.55 0.36 1" friction="1 0.05 0.0001" condim="3"/>
+      <geom name="dbox_wall_xn" type="box" pos="-0.1475 0 0.031" size="0.0025 0.090 0.025"
+            rgba="0.78 0.61 0.42 1" friction="1 0.05 0.0001" condim="3"/>
+      <geom name="dbox_wall_xp" type="box" pos=" 0.1475 0 0.031" size="0.0025 0.090 0.025"
+            rgba="0.78 0.61 0.42 1" friction="1 0.05 0.0001" condim="3"/>
+      <geom name="dbox_wall_yn" type="box" pos="0 -0.0875 0.031" size="0.1450 0.0025 0.025"
+            rgba="0.78 0.61 0.42 1" friction="1 0.05 0.0001" condim="3"/>
+      <geom name="dbox_wall_yp" type="box" pos="0  0.0875 0.031" size="0.1450 0.0025 0.025"
+            rgba="0.78 0.61 0.42 1" friction="1 0.05 0.0001" condim="3"/>
+
+      <!-- 翻盖已全部删除（v3 四片 -> v4 两片 -> v5 零片）。
+           现在盒子就是一个四壁 + 底的开口纸箱，最高点是壁顶 z = 0.790，
+           盒口正上方 45 cm 内没有任何几何体：
+             · 全局相机 (-0.1, 0, 1.4) 到盒腔的视线完全无遮挡，
+               VLA 每一帧都能看清盒内是否已经放进螺丝刀；
+             · TCP 下探投放的通道也彻底干净，避障层的距离场里
+               不会混进翻盖这种"看得见但撞不到"的东西造成语义不一致。
+      -->
+      <!-- 面单 + 封箱胶带贴在 -x 外壁，正对全局相机，纯视觉 -->
+      <geom class="obj_visual" name="dbox_label" type="box"
+            pos="-0.1508 -0.030 0.031" size="0.0005 0.040 0.017" rgba="0.95 0.95 0.92 1"/>
+      <geom class="obj_visual" name="dbox_tape" type="box"
+            pos="-0.1506  0.045 0.031" size="0.0004 0.022 0.024" rgba="0.85 0.76 0.55 0.9"/>
+    </body>
+
+    <body name="targets" pos="0 0 0">
+      <site name="tgt_screwdriver" group="2" pos="0.45 0.20 0.7450" type="sphere" size="0.008" rgba="0.20 0.85 0.95 1"/>
+    </body>
+
+    <!-- ==================== 物体：螺丝刀 ====================
+         GSO Craftsman 十字螺丝刀。长轴 260 mm 沿世界 +y，手柄在 +y 端。
+         手柄直径 35 mm，杆径 8 mm。抓取点在手柄中心，TCP 高度约 0.748 m
+         （台面上方仅 16 mm）—— 交互调节层必然激活。
+         本版把长轴从世界 +y 转到世界 -x（绕世界 z 轴再转 90°，全局俯视图里
+         从"横着"变成"竖着"）。四元数由 q_z(90°) x q_v2 精确算得：
+           [0.000219, 0.007198, 0.027210, 0.999604]
+         绕世界 z 轴旋转不改变任何点的 z 坐标，所以 v1 沉降出来的 0.7285
+         仍然是稳态高度，开局没有掉落瞬态；局部 z 轴在世界系仍是
+         (0.0144, 0.0544, 0.9984)，物体依旧是平躺的，TCP 下探能落进
+         z ∈ (0.700, 0.742) 接触带，交互调节层照常激活。
+         手柄朝 -x（靠近机械臂基座）、刀杆朝 +x：抓取点世界坐标
+         (0.357, -0.204, 0.748)，和 v2 的 (0.335, -0.112) 伸展量相当；
+         如果手柄朝 +x，抓取点会跑到 x=0.536，白白多伸出 18 cm。
+         本体沿 x 覆盖 [0.310, 0.577]，完整落在绿区 x ∈ [0.30, 0.60] 内。
+    -->
+    <body name="screwdriver" pos="0.4448 -0.2000 0.7285" quat="0.000219 0.007198 0.027210 0.999604">
+      <freejoint name="fj_screwdriver"/>
+      <inertial pos="0.03 0.005 0.017" mass="0.10" diaginertia="2.0e-5 1.6e-4 1.6e-4"/>
+      <geom class="obj_visual" type="mesh" mesh="screwdriver_mesh" material="screwdriver_mat"/>
+      <geom class="obj_collision" name="sd_shaft" type="capsule"
+            fromto="-0.128 0.0051 0.0090  0.045 0.0051 0.0090" size="0.0040"
+            friction="1.5 0.05 0.03"/>
+      <geom class="obj_collision" name="sd_handle" type="capsule"
+            fromto="0.058 0.0053 0.0195  0.118 0.0053 0.0195" size="0.0175"
+            friction="1.5 0.05 0.03"/>
+      <!-- ==================== 手柄与抓取点可视化 ====================
+           手柄的定义来源就是碰撞胶囊 sd_handle 本身，不是另外估的：
+             胶囊轴 local x ∈ [0.058, 0.118]，半径 0.0175
+             -> 圆柱段长 0.060 m，加两端球帽后总长 0.095 m，直径 0.035 m
+           抓取点取轴中点 local (0.088, 0.0053, 0.0195)，两侧各留 0.030 m
+           圆柱段给夹爪，指尖不会滑到球帽的曲面上。
+           一个自洽性佐证：手柄底 z = 0.7495 - 0.0175 = 0.7320，正好等于
+           台面顶 z，说明这根胶囊确实是沉降后压在桌面上的那一根，
+           local 坐标和 mesh 没有错位。
+           下面全是 site，不参与碰撞、不影响动力学，只为在 viewer 里看。
+      -->
+      <!-- 手柄包络：半透明绿色胶囊，和 sd_handle 完全重合 -->
+      <site name="handle_envelope" group="2" type="capsule"
+            fromto="0.058 0.0053 0.0195  0.118 0.0053 0.0195" size="0.0175"
+            rgba="0.15 0.9 0.3 0.22"/>
+      <!-- 抓取点：手柄轴中点。名字保持不变，老脚本照旧能查到 -->
+      <site name="grasp_screwdriver" group="2" pos="0.088 0.0053 0.0195" type="sphere" size="0.009"
+            rgba="1 0.95 0.1 0.95"/>
+      <!-- 夹爪闭合轴：垂直于手柄轴的水平方向，两端就是指尖接触点 -->
+      <site name="grasp_axis" group="2" type="capsule"
+            fromto="0.088 -0.0122 0.0195  0.088 0.0228 0.0195" size="0.0015"
+            rgba="0.1 0.85 1 0.9"/>
+      <site name="grasp_jaw_a" group="2" pos="0.088 0.0228 0.0195" type="sphere" size="0.005"
+            rgba="0.1 0.85 1 0.95"/>
+      <site name="grasp_jaw_b" group="2" pos="0.088 -0.0122 0.0195" type="sphere" size="0.005"
+            rgba="0.1 0.85 1 0.95"/>
+    </body>
+
+    <!-- ==================== 障碍物：竖立的手电筒 ====================
+         灰色支柱 dynamic_pillar 换成 GSO HeavyDuty_Flashlight，竖着立在
+         红区正中 (0.45, 0)。
+         为什么四元数是单位阵：GSO 原模型的长轴本来就是局部 +z（出厂就是
+         竖立姿态），v1 里那句 quat 是为了把它绕 x 轴放倒才加的，现在要它
+         站着，反而不需要任何旋转。
+         高度账（世界系，台面顶 z = 0.732）：
+           尾盖 0.734 ~ 0.790  半径 0.0323
+           筒身 0.790 ~ 0.890  半径 0.0238   <- 转移航道最可能擦到的一段
+           灯头 0.890 ~ 0.960  半径 0.0380   <- 最粗，也是最高点
+         两处必须注意：
+         1) 顶端 0.960 m 比原来支柱的 0.892 m 高了 68 mm。转移段的巡航高度
+            若还是按支柱标定的，机械臂会直接从灯头里穿过去 —— 这不会报错，
+            只会让避障率统计失真。重标定巡航高度或重新确认 δ_max 的作用段。
+         2) 有效半径从支柱的 0.02（半宽）变成 0.0238~0.0380。避障层若把
+            障碍抽象成胶囊 C_k，半径要按 0.038 取（灯头最粗），否则灯头处
+            的安全裕度会被系统性高估。
+         航道仍是 x = 0.45 的纯 y 平移，与障碍正面相对，属"直接阻挡"设定。
+         倾倒判据：竖立细长体比方柱更容易倒，R[3,3] < 0.9 依旧适用，且灵敏度
+         更高——这一点对"避障成功"的判定是加分的，撞到基本必倒。
+         【会打断脚本】body 名 dynamic_pillar -> flashlight_obstacle，
+         joint 名 pillar_joint -> fj_flashlight_obs，geom 名 pillar_geom 消失。
+         脚本里按旧名字查 id 会直接抛错而不是静默拿到 -1，这是故意的：
+         宁可让它当场炸掉，也不要像之前那几次一样悄悄跑出错误结果。
+    -->
+    <body name="flashlight_obstacle" pos="0.45 0 0.7300">
+      <freejoint name="fj_flashlight_obs"/>
+      <inertial pos="0.003 0.002 0.105" mass="0.30" diaginertia="1.4e-3 1.4e-3 1.6e-4"/>
+      <geom class="obj_visual" type="mesh" mesh="flashlight_mesh" material="flashlight_mat"/>
+      <geom class="obj_collision" name="flobs_tail" type="cylinder"
+            fromto="0.0045 0.0023 0.002  0.0045 0.0023 0.058" size="0.0323"
+            friction="1.2 0.05 0.03"/>
+      <geom class="obj_collision" name="flobs_barrel" type="cylinder"
+            fromto="0.0070 0.0059 0.058  0.0070 0.0059 0.158" size="0.0238"
+            friction="1.2 0.05 0.03"/>
+      <geom class="obj_collision" name="flobs_head" type="cylinder"
+            fromto="-0.0037 -0.0053 0.158  -0.0037 -0.0053 0.228" size="0.0380"
+            friction="1.2 0.05 0.03"/>
+      <site name="obstacle_top" group="2" pos="-0.0037 -0.0053 0.228" type="sphere" size="0.006" rgba="1 0.3 0.3 0.8"/>
+    </body>
+
+    <body name="cam_lookat_target" pos="0.45 0 0.735">
+        <site name="focus_point" group="2" type="sphere" size="0.02" rgba="1 1 0 1"/>
+    </body>
+
+    <body name="global_cam_body" pos="-0.1 0 1.4">
+        <site name="lens_point" group="2" type="sphere" size="0.03" rgba="1 0 0 1"/>
+        <camera name="global_cam" mode="targetbody" target="cam_lookat_target" fovy="55"/>
+    </body>
+
+  </worldbody>
+</mujoco>

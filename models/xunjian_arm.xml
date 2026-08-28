@@ -86,11 +86,18 @@
                       <geom type="mesh" mesh="link7" rgba="0.2 0.2 0.2 1" class="visualgeom" />
                       <geom type="mesh" mesh="link7" rgba="0.2 0.2 0.2 1" class="collisiongeom" />
                       
-                      <site name="ee_site" pos="0 0 0.08" size="0.01" rgba="1 0 0 1" />
+                      <site name="ee_site" group="4" pos="0 0 0.08" size="0.01" rgba="1 0 0 1" />
+                      <!-- ee_site 与下面三根 ee_axis 都是调试装饰，统一放进 group 4。
+                           MuJoCo 默认关闭 group 3/4/5，所以它们默认不出现在任何画面里，
+                           录制自然也录不到。想在 viewer 里看回来：
+                             geom 分组按数字键 4，site 分组按 SHIFT+4。
+                           为什么不放 group 1：group 1 是本文件 visualgeom 类的分组，
+                           也就是整条机械臂的视觉网格。录制时若为了关坐标轴而关掉 group 1，
+                           机械臂本体会一起从画面里消失。 -->
 
-                      <geom name="ee_axis_x" type="cylinder" size="0.002 0.04" pos="0.04 0 0.08" quat="0.7071068 0 0.7071068 0" rgba="1 0 0 0.8" contype="0" conaffinity="0" group="1"/>
-                      <geom name="ee_axis_y" type="cylinder" size="0.002 0.04" pos="0 0.04 0.08" quat="0.7071068 -0.7071068 0 0" rgba="0 1 0 0.8" contype="0" conaffinity="0" group="1"/>
-                      <geom name="ee_axis_z" type="cylinder" size="0.002 0.04" pos="0 0 0.12" quat="1 0 0 0" rgba="0 0 1 0.8" contype="0" conaffinity="0" group="1"/>
+                      <geom name="ee_axis_x" type="cylinder" size="0.002 0.04" pos="0.04 0 0.08" quat="0.7071068 0 0.7071068 0" rgba="1 0 0 0.8" contype="0" conaffinity="0" group="4"/>
+                      <geom name="ee_axis_y" type="cylinder" size="0.002 0.04" pos="0 0.04 0.08" quat="0.7071068 -0.7071068 0 0" rgba="0 1 0 0.8" contype="0" conaffinity="0" group="4"/>
+                      <geom name="ee_axis_z" type="cylinder" size="0.002 0.04" pos="0 0 0.12" quat="1 0 0 0" rgba="0 0 1 0.8" contype="0" conaffinity="0" group="4"/>
                       <body name="link8" pos="0 -0.023831 0.016" euler="0 0 0">
                         <joint name="joint8" type="slide" axis="0 1 0" range="-0.02 0.02" />
                         <inertial pos="0.000383624 -0.00773419 0.0191484" mass="0.0277487" fullinertia="1.01052e-05 1.35522e-05 5.60884e-06 4.34764e-08 2.15425e-07 -1.60833e-06" />

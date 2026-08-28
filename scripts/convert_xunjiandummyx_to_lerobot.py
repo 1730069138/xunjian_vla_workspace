@@ -78,6 +78,8 @@ def main(
         },
         image_writer_threads=10,
         image_writer_processes=5,
+        # image_writer_threads=4,
+        # image_writer_processes=2,
     )
 
     for ep_dir in tqdm.tqdm(ep_dirs, desc="🔄 正在打包数据"):
