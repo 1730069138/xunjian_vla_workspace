@@ -26,7 +26,7 @@ def main(
     repo_id: str = "local/dummyx_screwdriver", 
     push_to_hub: bool = False
 ):
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if not os.path.isabs(data_dir):
         data_dir = os.path.join(BASE_DIR, data_dir)
         

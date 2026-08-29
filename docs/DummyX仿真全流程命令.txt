@@ -39,8 +39,8 @@ source ~/.bashrc
 2. 收集数据集
 ================================================================
 conda activate dummyx
-cd ~/xunjian_vla_workspace/scripts
-python3 auto_grasp_screwdriver2.py --target 150
+cd ~/xunjian_vla_workspace
+python3 scripts/collect/auto_grasp_screwdriver.py --target 150
 
 # --target 是总数不是新增数，中断后重跑同一条命令即可续采（会补空缺编号）
 # 无窗口加 --headless
@@ -50,9 +50,9 @@ python3 auto_grasp_screwdriver2.py --target 150
 3. 转换数据集
 ================================================================
 conda activate dummyx
-cd ~/xunjian_vla_workspace/scripts
-python3 convert_xunjiandummyx_to_lerobot.py \
-    --data_dir ../datasets/screwdriver_cleanup \
+cd ~/xunjian_vla_workspace
+python3 scripts/convert/convert_xunjiandummyx_to_lerobot.py \
+    --data_dir datasets/screwdriver_cleanup \
     --repo_id local/dummyx_screwdriver
 
 # 脚本会先 rmtree 掉旧目录，是全量重建
@@ -120,8 +120,9 @@ conda activate dummyx
 cd ~/xunjian_vla_workspace
 
 # 先开环回放自检：拿训练集真实帧喂 server，能分清是模型问题还是部署端问题
-python3 scripts/test_policy_replay.py --host <训练机ip> --port 8000 --ep datasets/screwdriver_cleanup/ep_0
+python3 scripts/debug/test_policy_replay.py --host <训练机ip> --port 8000 \
+    --data_dir datasets/screwdriver_cleanup --ep ep_0
 
 # 正式推理 / 消融
-python3 scripts/deploy_screwdriver_client2.py --host <训练机ip> --port 8000
+python3 scripts/deploy/deploy_screwdriver_client.py --host <训练机ip> --port 8000
 # 断点续跑靠 recordings/<run_folder>/progress.json，重头跑加 --fresh

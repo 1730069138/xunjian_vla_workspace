@@ -15,9 +15,9 @@
     绕过了渲染。渲染一致性由 robot_spec.load_scene() 统一入口来保证。
 
 用法:
-    python scripts/test_policy_replay.py                       # 默认取 ep_000
-    python scripts/test_policy_replay.py --ep ep_007 --starts 0 40 120
-    python scripts/test_policy_replay.py --host 127.0.0.1 --port 8000
+    python scripts/debug/test_policy_replay.py                       # 默认取 ep_000
+    python scripts/debug/test_policy_replay.py --ep ep_007 --starts 0 40 120
+    python scripts/debug/test_policy_replay.py --host 127.0.0.1 --port 8000
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from common import robot_spec as rspec  # noqa: E402
 
 from openpi_client import websocket_client_policy  # noqa: E402

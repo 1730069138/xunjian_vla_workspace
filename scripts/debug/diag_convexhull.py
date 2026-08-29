@@ -4,8 +4,8 @@
 夹爪手掌那种带凹槽的形状，凸包会把槽填平，形成一块看不见的实心挡板。
 
 用法（在 xunjian_vla_workspace 根目录）：
-    python scripts/diag_convexhull.py
-    python scripts/diag_convexhull.py --bodies link7 link8 link9 --site ee_site
+    python scripts/debug/diag_convexhull.py
+    python scripts/debug/diag_convexhull.py --bodies link7 link8 link9 --site ee_site
 
 判读：
     hull/mesh 体积比 ≈ 1.0  -> 网格本身就是凸的，碰撞形状 = 你看到的形状

@@ -2,9 +2,9 @@
 dummyx 采集 / 转换 / 部署 —— conda 环境重建完整流程（已验证跑通）
 --------------------------------------------------------------------------------
 目标：在新电脑上建一个 conda 环境，运行
-      auto_grasp_screwdriver2.py       （MuJoCo 数据采集）
-      convert_xunjiandummyx_to_lerobot.py （转 LeRobot 格式）
-      deploy_screwdriver_client2.py    （连 policy server 推理）
+      scripts/collect/auto_grasp_screwdriver.py（MuJoCo 数据采集）
+      scripts/convert/convert_xunjiandummyx_to_lerobot.py（转 LeRobot 格式）
+      scripts/deploy/deploy_screwdriver_client.py（连 policy server 推理）
 约束：转换产物必须能被现有的 openpi uv 环境读取，否则 compute_norm_stats 出错。
       openpi 端不重建，继续用原来的 uv 虚拟环境。
 ================================================================================
@@ -130,7 +130,7 @@ cd ~/lerobot && git rev-parse HEAD   # 核对 commit
 # 8.2 小批量转换（3 条 ep），比对元数据结构
 mkdir -p <project>/datasets/_smoke
 cp -r <project>/datasets/screwdriver_cleanup/ep_{0,1,2} <project>/datasets/_smoke/
-python convert_xunjiandummyx_to_lerobot.py --data_dir datasets/_smoke --repo_id local/dummyx_smoke
+python scripts/convert/convert_xunjiandummyx_to_lerobot.py --data_dir datasets/_smoke --repo_id local/dummyx_smoke
 
 python -c "
 import json,pathlib

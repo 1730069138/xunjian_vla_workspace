@@ -2,17 +2,18 @@
 # =============================================================================
 # 在 xunjian_vla_workspace 下布置桌面归位任务所需的三个物体资产。
 #
-# 用法（在工作区根目录 ~/xunjian_vla_workspace 下运行）：
-#     bash setup_objects.sh
+# 用法：
+#     bash tools/setup_objects.sh
 #
 # 前置条件：multimeter 的两张贴图 mm_panel.png / mm_case.png 已经在当前目录，
 # 或者用 make_mm_texture.py 现场生成。
 # =============================================================================
 set -euo pipefail
 
-WS="$(pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WS="$(dirname "$SCRIPT_DIR")"
 if [[ ! -d "$WS/scenes" || ! -d "$WS/models" ]]; then
-  echo "错误：请在 xunjian_vla_workspace 根目录下运行（需要能看到 scenes/ 和 models/）" >&2
+  echo "错误：无法根据脚本位置找到工作区（需要能看到 scenes/ 和 models/）" >&2
   exit 1
 fi
 

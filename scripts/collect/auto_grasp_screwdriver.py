@@ -8,7 +8,7 @@
 运行:
     conda activate xunjian_vla_workspace2
     pip install lerobot tqdm tyro mujoco opencv-python numpy
-    python scripts/collect_vla_dataset.py --episodes 50 --out_dir ./datasets/screwdriver_cleanup
+    python scripts/collect/auto_grasp_screwdriver.py --target 50 --out_dir ./datasets/screwdriver_cleanup
 """
 
 import argparse
@@ -23,13 +23,14 @@ import numpy as np
 from tqdm import tqdm
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
 
 # ==============================================================================
 # 🔗 共享契约：凡是"采集端与部署端必须一致"的量，一律从 common/robot_spec.py 取，
 #    不在本文件重复定义。改约定去改那个文件，部署端会自动跟上。
 # ==============================================================================
 import sys
-sys.path.insert(0, str(SCRIPT_DIR.parent))
+sys.path.insert(0, str(PROJECT_ROOT))
 from common import robot_spec as rspec
 
 SCENE_PATH = rspec.SCENE_PATH
@@ -919,7 +920,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="自动采集基于视觉的 VLA 数据集")
     parser.add_argument("--target", type=int, default=150,
                         help="目标数据集总数：文件夹里达到这么多条即结束(会先补被删掉的空缺序号)")
-    parser.add_argument("--out_dir", type=str, default="../datasets/screwdriver_cleanup", help="保存数据文件夹的目录")
+    parser.add_argument(
+        "--out_dir",
+        type=str,
+        default=str(PROJECT_ROOT / "datasets" / "screwdriver_cleanup"),
+        help="保存数据文件夹的目录",
+    )
     parser.add_argument("--seed", type=int, default=None, help="随机种子")
     parser.add_argument("--headless", action="store_true", help="是否无头模式运行(后台极速跑数据)")
     args = parser.parse_args()

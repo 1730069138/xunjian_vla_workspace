@@ -89,7 +89,7 @@ from openpi_client import websocket_client_policy
 # 🔗 共享契约模块（项目根目录下的 common/）
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from common import robot_spec as rspec
 
 # ==========================================
@@ -639,7 +639,7 @@ class _NullViewer:
 # 🚀 部署主程序
 # ==========================================
 def main(args):
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     # 🔗 统一入口：读 xml -> 应用相机镜像(global_cam_body.x = 1.0) -> 建 data -> 契约自检。
     #    采集端 auto_grasp_screwdriver2.py 调用的是同一个函数。任何一端漏做都不可能了。

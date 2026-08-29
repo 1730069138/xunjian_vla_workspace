@@ -3,8 +3,8 @@
 碰撞体诊断：定位"下抓时被顶住抓不深"的元凶。
 
 用法（在 xunjian_vla_workspace 根目录下）：
-    python scripts/diag_collision.py                # 只列静态碰撞体清单
-    python scripts/diag_collision.py --probe        # 额外做末端下探扫描，打印首次接触
+    python scripts/debug/diag_collision.py                # 只列静态碰撞体清单
+    python scripts/debug/diag_collision.py --probe        # 额外做末端下探扫描，打印首次接触
 
 把 SCENE 改成你的实际路径，或直接用 common.robot_spec.SCENE_PATH。
 """

@@ -43,8 +43,10 @@ jun@jun:~/xunjian_vla_workspace$ tree
 │   │   ├── robot_spec.cpython-310.pyc
 │   │   └── robot_spec.cpython-311.pyc
 │   └── robot_spec.py
-├── dummyx_conda_setup.txt
-├── dummyx_pipeline_commands.txt
+├── docs
+│   ├── DummyX仿真全流程命令.txt
+│   ├── DummyX环境重建指南.txt
+│   └── 文件树.txt
 ├── models
 │   ├── xunjian_arm.urdf
 │   └── xunjian_arm.xml
@@ -76,8 +78,11 @@ jun@jun:~/xunjian_vla_workspace$ tree
 ├── requirements-dummyx.txt
 ├── scenes
 │   └── xunjian_arm_scene.xml
+├── tools
+│   ├── check_scene_paths.py
+│   └── setup_objects.sh
 └── scripts
-    ├── 备份
+    ├── archive
     │   ├── 复盘笔记.txt
     │   ├── auto_grasp_screwdriver2.py
     │   ├── auto_grasp_screwdriver3.py
@@ -89,17 +94,18 @@ jun@jun:~/xunjian_vla_workspace$ tree
     │   ├── data_collector（新任务单次固定位置）.py
     │   ├── deploy_screwdriver_client2.py
     │   └── train.py
-    ├── auto_grasp_screwdriver.py
-    ├── compute_norm_stats.py
-    ├── convert_xunjiandummyx_to_lerobot.py
-    ├── deploy_screwdriver_client.py
+    ├── collect
+    │   ├── auto_grasp_screwdriver.py
+    │   └── collect_tidy_B.py
+    ├── convert
+    │   └── convert_xunjiandummyx_to_lerobot.py
+    ├── debug
+    │   ├── read_data.py
+    │   ├── test_policy_replay.py
+    │   └── visualize_camera.py
+    ├── deploy
+    │   └── deploy_screwdriver_client.py
     ├── environment.yml
-    ├── openpi_freeze.txt
-    ├── read_data.py
-    ├── test_policy_replay.py
-    └── visualize_camera.py
+    └── openpi_freeze.txt
 
 15 directories, 83 files
-
-
-

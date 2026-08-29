@@ -5,7 +5,7 @@
 可以一次看到全部缺失项，而不是修一个报一个。
 
 用法（工作区根目录下）：
-    python3 check_scene_paths.py scenes/xunjian_arm_scene_tidy.xml
+    python3 tools/check_scene_paths.py scenes/xunjian_arm_scene_tidy.xml
 """
 import os
 import re

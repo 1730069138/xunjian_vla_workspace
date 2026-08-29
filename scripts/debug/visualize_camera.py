@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import mujoco
 import mujoco.viewer
 import cv2
@@ -5,8 +7,8 @@ import time
 import numpy as np
 
 def main():
-    # 1. 确保路径正确（相对于脚本在 scripts/ 目录运行）
-    model_path = "../scenes/xunjian_arm_scene.xml"
+    # 1. 确保路径正确（相对于仓库根目录）
+    model_path = Path(__file__).resolve().parent.parent.parent / "scenes" / "xunjian_arm_scene.xml"
     
     # 加载模型和数据
     print("正在加载 MuJoCo 场景...")
