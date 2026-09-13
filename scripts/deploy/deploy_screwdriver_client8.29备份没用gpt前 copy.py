@@ -6,6 +6,7 @@ import argparse
 import cv2  
 import os   
 import json
+from dataclasses import replace
 
 
 # ==============================================================================
@@ -38,9 +39,10 @@ def run_signature(cfg, args):
         "fixed_eval": bool(args.fixed_eval),
         # 🔧 [新增] 螺丝刀初始位姿分布也是实验条件：朝向抖动幅度、位置采样域。
         #    任一改动都会换掉整个初始状态分布，新旧回合不能混在同一张表里统计。
-        "screw_yaw_jitter": float(rspec.SCREW_YAW_JITTER),
-        "spawn_x": list(rspec.SPAWN_X_RANGE),
-        "spawn_y": list(rspec.SPAWN_Y_RANGE),
+        "scene": str(SCENE_PATH),
+        "screw_yaw_jitter": float(SCREW_YAW_JITTER),
+        "spawn_x": list(SPAWN_X_RANGE),
+        "spawn_y": list(SPAWN_Y_RANGE),
     }
 
 
@@ -91,6 +93,17 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from common import robot_spec as rspec
+
+# 与 collect_tidy_B.py 使用同一场景与实体命名。
+SCENE_PATH = Path(__file__).resolve().parents[2] / "scenes" / "tidy_B_record_preview.xml"
+OBJECT_BODY = "screwdriver"
+OBJECT_FREEJOINT = "fj_screwdriver"
+STORAGE_BOX_BODY = "delivery_box"
+TASK_GRIPPER_KP = 400.0
+SPAWN_X_RANGE = (0.38, 0.50)
+SPAWN_Y_RANGE = (-0.26, -0.14)
+SPAWN_DROP_Z = 0.80
+SCREW_YAW_JITTER = np.radians(30.0)
 
 # ==========================================
 # 🧮 核心数学与几何工具库
@@ -165,13 +178,13 @@ def process_apf_action(model, data, current_action, use_obstacle, step_counter):
     link6_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "link6")
     link7_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "link7")
     tcp_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "ee_site")
-    screw_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "real_screwdriver")
+    screw_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, OBJECT_BODY)
     pillar_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "dynamic_pillar")
 
     tcp_pos = data.site_xpos[tcp_id].copy()
     
     # 🌟 适配新桌面的收纳盒坐标
-    box_pos = np.array([0.35, 0.40, 0.732])
+    box_pos = data.xpos[RIDX.box_body_id]
     dist_to_box = np.linalg.norm(tcp_pos - box_pos)
 
     dynamic_safe_margin = np.clip(0.025 + (dist_to_box * 0.4), 0.025, 0.08)
@@ -515,15 +528,28 @@ def _state_dof_adr(model):
     return _STATE_DOF_ADR
 
 
-# 🔗 [已改] 螺丝刀初始位姿（位置域 + 朝向 + 抖动幅度）全部来自 robot_spec，
-#    与采集端 randomize_object_pose 调的是同一个 rspec.sample_screw_spawn。
+# 螺丝刀初始位姿与 collect_tidy_B.py 使用相同的位置域和偏航抖动。
 #    过去这里是 np.random.uniform(0.38, 0.48) + 硬编码单位四元数：
 #      · 朝向：场景 xml 把螺丝刀绕 z 转了 90°，这里却摆回单位四元数，对不上且不报错；
 #      · 位置：朝向固定为 90° 后杆身沿世界 X、半长 0.10，x=0.38 会让刀尖伸到 0.28，
 #              而桌面在 x=0.30 就到头了 —— 螺丝刀直接挂在桌沿外。
-SPAWN_X_RANGE = rspec.SPAWN_X_RANGE
-SPAWN_Y_RANGE = rspec.SPAWN_Y_RANGE
-SCREW_YAW_JITTER = rspec.SCREW_YAW_JITTER
+def sample_tidy_b_spawn(model, rng=None):
+    """复现 collect_tidy_B.py 的位置采样和绕世界 z 轴偏航抖动。"""
+    rng = rng if rng is not None else np.random.default_rng()
+    return (float(rng.uniform(*SPAWN_X_RANGE)),
+            float(rng.uniform(*SPAWN_Y_RANGE)),
+            float(rng.uniform(-SCREW_YAW_JITTER, SCREW_YAW_JITTER)))
+
+
+def set_tidy_b_screw_pose(model, data, x, y, yaw_delta):
+    jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, OBJECT_FREEJOINT)
+    adr, dof = model.jnt_qposadr[jid], model.jnt_dofadr[jid]
+    data.qpos[adr:adr + 3] = [x, y, SPAWN_DROP_Z]
+    qz = np.array([np.cos(yaw_delta / 2.0), 0.0, 0.0, np.sin(yaw_delta / 2.0)])
+    quat = np.zeros(4)
+    mujoco.mju_mulQuat(quat, qz, np.asarray(model.body(OBJECT_BODY).quat, dtype=float))
+    data.qpos[adr + 3:adr + 7] = quat
+    data.qvel[dof:dof + 6] = 0.0
 
 
 def reset_scene(model, data, use_obstacle=False, target_xy=None):
@@ -542,12 +568,12 @@ def reset_scene(model, data, use_obstacle=False, target_xy=None):
 
     # 🔗 [已改] 螺丝刀初始位姿走共享契约：位置域、基准朝向、抖动幅度与采集端同源。
     #    --fixed_eval 只锁死 XY，朝向仍取场景基准（此时抖动为 0，本来就是定值）。
-    yaw = rspec.spawn_domain(model)["yaw"]
     if target_xy is not None:
         target_x, target_y = target_xy
+        _, _, yaw_delta = sample_tidy_b_spawn(model)
     else:
-        target_x, target_y, yaw = rspec.sample_screw_spawn(model)
-    rspec.set_screw_pose(model, data, target_x, target_y, yaw)
+        target_x, target_y, yaw_delta = sample_tidy_b_spawn(model)
+    set_tidy_b_screw_pose(model, data, target_x, target_y, yaw_delta)
         
     # 🔧 [新增] 把海绵扔出场外，与采集端 auto_grasp_screwdriver.py 完全一致。
     #    场景 XML 里 sponge 默认在 (0.45, -0.30, 0.80)，会掉在桌面上并出现在
@@ -571,8 +597,10 @@ def reset_scene(model, data, use_obstacle=False, target_xy=None):
             data.qpos[q_adr : q_adr+3] = [10.0, 10.0, -10.0]
         data.qvel[v_adr : v_adr+6] = 0
         
-    # 🔗 起手位姿 + 夹爪默认闭合，全部走共享契约，与采集端逐位一致
+    # tidy_B 采集每条 episode 都以夹爪张开开始。
     rspec.reset_to_init(data, RIDX)
+    data.qpos[RIDX.grip_qpos_adr] = rspec.GRIP_OPEN
+    data.ctrl[RIDX.j8_id], data.ctrl[RIDX.j9_id] = rspec.GRIP_OPEN
 
     # 🔧 [新增] 把执行器指令对齐到起手位姿。position 执行器的 ctrl 是"目标角度"，
     #    上一回合结束时它停在任务终点；沉降的 1000 步里若不对齐，执行器会一直
@@ -641,12 +669,37 @@ class _NullViewer:
 def main(args):
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
-    # 🔗 统一入口：读 xml -> 应用相机镜像(global_cam_body.x = 1.0) -> 建 data -> 契约自检。
-    #    采集端 auto_grasp_screwdriver2.py 调用的是同一个函数。任何一端漏做都不可能了。
+    # 与 collect_tidy_B.py 一致：加载 tidy_B XML、提高任务夹爪增益并应用相机覆盖。
     global RIDX, DEBUG_CONTACT, DEBUG_CONTACT_EVERY
     DEBUG_CONTACT = bool(getattr(args, "debug_contact", False))
     DEBUG_CONTACT_EVERY = max(1, int(getattr(args, "debug_every", 20)))
-    model, data, RIDX = rspec.load_scene()
+    model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+    for actuator_name in rspec.GRIP_ACTUATORS:
+        aid = model.actuator(actuator_name).id
+        old_kp = float(model.actuator_gainprm[aid, 0])
+        old_kv = -float(model.actuator_biasprm[aid, 2])
+        if old_kp <= 0:
+            raise RuntimeError(f"夹爪执行器 {actuator_name} 不是有效的位置伺服，kp={old_kp}")
+        scale = np.sqrt(TASK_GRIPPER_KP / old_kp)
+        model.actuator_gainprm[aid, 0] = TASK_GRIPPER_KP
+        model.actuator_biasprm[aid, 1] = -TASK_GRIPPER_KP
+        model.actuator_biasprm[aid, 2] = -old_kv * scale
+    rspec.apply_camera_overrides(model)
+    data = mujoco.MjData(model)
+    RIDX = replace(
+        rspec.resolve_indices(model),
+        object_body_id=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, OBJECT_BODY),
+        box_body_id=mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, STORAGE_BOX_BODY),
+        obstacle_body_id=-1,
+    )
+    required = {"ee_site": RIDX.ee_site_id, OBJECT_BODY: RIDX.object_body_id,
+                STORAGE_BOX_BODY: RIDX.box_body_id}
+    missing = [name for name, obj_id in required.items() if obj_id < 0]
+    if missing or not RIDX.is_contiguous:
+        raise RuntimeError(
+            f"tidy_B 场景契约失败：缺失={missing}，state地址={RIDX.state_qpos_adr.tolist()}"
+        )
+    print(f"✅ 推理/采集共用 XML: {SCENE_PATH}")
 
     # ==========================================================================
     # 🔧 隐藏所有坐标系标记 + 审计场上是否真有能碰撞的球体
@@ -692,7 +745,7 @@ def main(args):
     renderer_rgb = rspec.make_renderer(model)
     policy = websocket_client_policy.WebsocketClientPolicy(host=args.host, port=args.port)
     
-    target_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "real_screwdriver")
+    target_body_id = RIDX.object_body_id
     pillar_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "dynamic_pillar")
     tcp_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "ee_site")
     
@@ -755,12 +808,11 @@ def main(args):
         # 🔧 [已改] 原为写死的 (0.40, 0.0)：朝向固定为 90° 后杆身沿世界 X、半长 0.10，
         #    刀尖正好落在 x=0.30，即绿区与桌沿的边界线上，属于压线摆放。
         #    改成取可行域中点，位置域一旦调整这里自动跟随，不会再各写一份。
-        _dom = rspec.spawn_domain(model)
-        absolute_fixed_xy = (round(float(np.mean(_dom["x"])), 3),
-                             round(float(np.mean(_dom["y"])), 3))
+        absolute_fixed_xy = (round(float(np.mean(SPAWN_X_RANGE)), 3),
+                             round(float(np.mean(SPAWN_Y_RANGE)), 3))
         fixed_targets = [absolute_fixed_xy for _ in range(args.num_episodes)]
         print(f"📌 [绝对静止] 螺丝刀坐标已焊死在: X={absolute_fixed_xy[0]}, Y={absolute_fixed_xy[1]}"
-              f"（可行域 x∈[{_dom['x'][0]:.3f}, {_dom['x'][1]:.3f}] 的中点）")
+              f"（采集域 x∈[{SPAWN_X_RANGE[0]:.3f}, {SPAWN_X_RANGE[1]:.3f}] 的中点）")
 
     # 🔧 [新增] 首个动作块自检只打印一次
     _printed_chunk_diag = False
@@ -1017,8 +1069,10 @@ def main(args):
                         if data.xmat[pillar_body_id].reshape(3, 3)[2, 2] < 0.9: episode_col = True
 
                     screw_pos = data.xpos[target_body_id]
-                    # 🌟 根据新桌面蓝色收纳区域 [0.35, 0.40] 修改成功判定
-                    in_box = abs(screw_pos[0] - 0.35) < 0.12 and abs(screw_pos[1] - 0.40) < 0.12 and screw_pos[2] < 0.85 
+                    box_pos = data.xpos[RIDX.box_body_id]
+                    in_box = (abs(screw_pos[0] - box_pos[0]) < 0.145 and
+                              abs(screw_pos[1] - box_pos[1]) < 0.085 and
+                              screw_pos[2] < 0.85)
                     # 🔧 [已修复] 原为 current_action[6] > 0.02（永远为假）。
                     #    新约定负值 = 张开 = 已释放。
                     is_released = (not is_gripper_closed(grip_cmd)) or (np.linalg.norm(current_tcp - screw_pos) > 0.06)

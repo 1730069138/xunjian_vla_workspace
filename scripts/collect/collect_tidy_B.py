@@ -38,9 +38,13 @@ collect_tidy_B.py —— 螺丝刀入快递盒 · 自动化采集
 """
 
 import argparse
+import json
 import os
+import shutil
 import sys
+import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -49,10 +53,11 @@ import mujoco.viewer
 import numpy as np
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPT_DIR.parent.parent.parent))
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 from common import robot_spec as rspec
 
-SCENE_PATH = SCRIPT_DIR.parent / "scenes" / "tidy_B_record_preview.xml"
+SCENE_PATH = PROJECT_ROOT / "scenes" / "tidy_B_record_preview.xml"
 
 ARM_JOINTS = rspec.ARM_JOINTS
 ARM_ACTUATORS = rspec.ARM_ACTUATORS
@@ -103,7 +108,64 @@ Q_ZERO = np.zeros(6)      # 关节全 0：每条 episode 的起手与收尾位�
 LANGUAGE_INSTRUCTIONS = rspec.LANGUAGE_INSTRUCTIONS
 
 MISS_PROB = 0.10                  # 故意抓偏，制造纠错示范
-SLIP_TOL = 0.06
+SLIP_TRANSLATION_TOL = 0.035      # 物体相对夹持中心的平移变化上限（m）
+SLIP_ROTATION_TOL_DEG = 30.0      # 物体相对夹持中心的旋转变化上限（deg）
+TASK_GRIPPER_KP = 400.0           # 仅本任务提高夹持力；机械臂其余关节保持 XML 参数
+PRELIFT_DISTANCE = 0.050          # 正式搬运前慢速试提 5cm
+PRELIFT_CLEARANCE = 0.012         # 物体最低点至少离桌 12mm 才算真正抓起
+PRELIFT_SPEED = 0.08              # 试提速度，经过 SPEED_SCALE 后实际更低
+PRELIFT_SETTLE_TIME = 0.20        # 离桌且双指接触后稳定多久再标定抓取参考
+PRELIFT_TIMEOUT = 3.0
+MAX_GRASP_RETRIES = 1             # 故意抓偏允许纠错一次，再失败则整条重采
+JAW_LEVEL_K = 20.0                # 抓取前夹爪闭合轴调平增益（实测比 4.0 收敛快）
+JAW_LEVEL_RHO = 0.05              # 调平伺服阻尼（实测比 0.10 收敛快）
+JAW_AXIS_TOL_DEG = 4.0            # 闭合轴与目标水平方向的夹角容差
+JAW_HEIGHT_TOL = 0.002            # 左右夹爪 body 原点高度差容差（m）
+PREALIGN_CLEARANCE = 0.045         # 在手柄中心上方 45mm 边下降边调平
+# ---------- IK 预对齐：先解出"夹爪水平"的关节位形，再关节空间走过去 ----------
+# 速度级伺服跨不过运动学分支：夹爪水平的解几乎全在 joint6≈70~150° 一侧，
+# 而"就近选符号"会把 joint6 推到行程下限 0 顶死，残留十几度高低差压不下来。
+# 离线 IK 两侧符号都试，取限位余量最大的解，再用关节空间运动过去。
+IK_PREALIGN_CLEARANCE = 0.10      # IK 目标点取在手柄中心上方 10cm（悬停高度）
+IK_MAX_ITERS = 300
+IK_DLS_RHO = 0.05
+IK_POS_TOL = 0.002
+IK_AXIS_TOL_DEG = 1.0
+IK_RANDOM_STARTS = 24
+IK_APPROACH_MAX_TILT_DEG = 40.0   # 接近方向偏离竖直下方的上限，太斜没法直下抓
+IK_GOOD_MARGIN = np.radians(28.0)  # 限位余量到这个程度就不再继续搜
+IK_MOVE_TOL = 0.05                # 关节空间到位判据（rad，L2）
+IK_MOVE_TIMEOUT = 4.0
+IK_OBJECT_DISTURB_TOL = 0.010     # 关节空间转移途中碰动物体的容忍上限（m）
+PREALIGN_SETTLE_TIME = 0.15
+PREALIGN_TIMEOUT = 3.0
+# 位置到位后把线速度压到很小，让 6 个自由度几乎全部让给调平任务。
+# 远处接近奇异时，位置任务和姿态任务抢自由度是残余高低差压不下去的主因。
+PREALIGN_FREEZE_DIST = 0.02       # 到这个距离内视为位置已到位
+PREALIGN_FREEZE_GAIN = 0.15       # 冻结时保留的位置增益，仅用于防漂
+PREALIGN_STALL_WINDOW = 1.0       # 调平误差停滞检测窗口（s）
+# 停滞用"归一化残差"（轴误差/角度容差 与 高度差/高度容差 取大者）衡量，
+# 窗口内至少要改善这么多倍容差才算仍在收敛。阈值定太粗会把正常的末段
+# 慢收敛误判成不可达，从而把大量本可成功的 episode 推去走备用路径。
+PREALIGN_STALL_IMPROVE_RATIO = 0.05
+# 下降段迟迟无法同时满足到位+水平的判定时限。必须小于 DEADLOCK_STEPS 对应
+# 的时长（timestep=0.001s 时约 5.7s），否则永远先撞上阶段死锁、走不到补救分支。
+DESCEND_ALIGN_TIMEOUT = 4.0
+# ---------- 调平不可达时的备用路径：先把螺丝刀推到更易调平的区域 ----------
+MAX_REPOSE_RETRIES = 1            # 预调整最多触发一次，仍不可达才判失败
+REPOSE_ANCHOR_XY = np.array([0.42, -0.18])   # 可达性较好的工作区中心
+REPOSE_PUSH_DISTANCE = 0.06       # 单次推动的最大位移
+REPOSE_MIN_PUSH = 0.015           # 小于这个位移不值得推
+REPOSE_PUSH_CLEARANCE = 0.020     # 推之前落在物体包络之外的余量
+REPOSE_PUSH_Z_OFFSET = 0.022      # 推动高度（桌面之上），贴着杆身推
+REPOSE_GREEN_MARGIN = 0.030       # 推动终点距绿区边界的安全余量
+REPOSE_SPEED = 0.18
+# 备用路径共 5 个子阶段，所有子阶段超时之和必须明显小于 DEADLOCK_STEPS
+# 对应的时长（timestep=0.001s 时约 5.7s），否则会先撞上阶段死锁判定。
+REPOSE_STAGE_TIMEOUT = 0.9
+REPOSE_TIMEOUT = 4.5
+LIFT_SPEED = 0.15                 # 验证后的继续抬升速度
+MOVE_SPEED = 0.30                 # 搬运速度，降低启停冲击
 RELEASE_YAW_TOL = np.radians(35.0)
 W_ORIENT = 2.5
 # 抓到之后锁死腕部三关节，只用 joint1/2/3 搬运。
@@ -164,10 +226,191 @@ def skew(v):
 def jac_at_offset(J6, d_world):
     """把 site 处的雅可比搬到"相对 site 偏移 d_world 的刚连点"上。
     v_p = v_s + omega x d = (Jp - skew(d) Jr) qdot
-    不做这一步，伺服送到目标点的是 ee_site 小球，而真正夹东西的指垫在它后面
-    ~33mm —— 夹爪一斜，这 33mm 就沿手柄轴滑过去，夹到细颈上。
+    不做这一步，伺服送到目标点的是 ee_site 小球，而不是实际接触手柄的指端面；
+    夹爪一斜，这段偏移就会投影到手柄轴向，导致接触位置偏到细颈上。
     """
     return J6[:3, :] - skew(d_world) @ J6[3:, :]
+
+
+def control_point_kinematics(data, H, J6):
+    """真实接触端面中心的位置、姿态和位置雅可比。
+
+    ee_site 只是 link7 上的标记点；真正与物体交互的是沿工具 z 轴偏移后的两指
+    接触端面中心。偏移随末端姿态旋转，因此位置和雅可比必须每个控制步重新计算。
+    """
+    R = data.site_xmat[H.site_ee].reshape(3, 3)
+    d_world = R @ H.tcp_offset
+    pos = data.site_xpos[H.site_ee] + d_world
+    return pos, R, jac_at_offset(J6, d_world)
+
+
+def relative_object_pose(data, H, tool_pos, tool_mat):
+    """物体在真实夹持中心坐标系下的相对位姿。"""
+    obj_pos = data.xpos[H.body_obj]
+    obj_mat = data.xmat[H.body_obj].reshape(3, 3)
+    return tool_mat.T @ (obj_pos - tool_pos), tool_mat.T @ obj_mat
+
+
+def grasp_pose_error(reference, current):
+    """返回抓取相对位姿的平移误差（m）和旋转误差（deg）。"""
+    ref_pos, ref_mat = reference
+    cur_pos, cur_mat = current
+    trans = float(np.linalg.norm(cur_pos - ref_pos))
+    err_mat = cur_mat @ ref_mat.T
+    angle = np.arccos(np.clip((np.trace(err_mat) - 1.0) * 0.5, -1.0, 1.0))
+    return trans, float(np.degrees(angle))
+
+
+def jaw_axis_sign_near(model, data, tool_mat):
+    """离当前闭合轴更近的那个基准符号。"""
+    base = grasp_tool_frame(model, data)[:, 1]
+    return -1.0 if float(np.dot(tool_mat[:, 1], base)) < 0.0 else 1.0
+
+
+def horizontal_jaw_target(model, data, tool_mat, sign=None):
+    """与手柄垂直且与桌面平行的夹爪闭合轴。
+
+    夹爪两指对称，闭合轴 +a 和 -a 是等价的抓取姿态，但对应的 joint6 解相差 π。
+    joint6 行程是 [0, 4.76] rad 的单边范围：就近的那个符号常常要求它往下限
+    0 以外转，于是卡死在 0，残留十几度高低差怎么压都压不下去 —— 这正是
+    "远处夹爪不平行"的真实成因，不是奇异也不是增益问题。
+    sign 显式给定时用给定符号（调平停滞后翻转到另一个等价解）；
+    sign=None 时按就近选取，并且不随伺服过程中的姿态变化来回翻，避免振荡。
+    """
+    base = grasp_tool_frame(model, data)[:, 1]
+    if sign is None:
+        sign = jaw_axis_sign_near(model, data, tool_mat)
+    return base * sign
+
+
+def jaw_alignment_error(data, H, tool_mat, target_axis):
+    """返回闭合轴夹角（deg）和左右夹爪高度差（m）。"""
+    current = tool_mat[:, 1]
+    axis_angle = np.degrees(np.arccos(np.clip(np.dot(current, target_axis), -1.0, 1.0)))
+    z8 = float(data.xpos[H.finger_bodies[0]][2])
+    z9 = float(data.xpos[H.finger_bodies[1]][2])
+    return float(axis_angle), abs(z8 - z9)
+
+
+def pos_jaw_axis_qdot(J6, Jp, v_lin, current_axis, target_axis,
+                      k_axis=JAW_LEVEL_K, rho=JAW_LEVEL_RHO):
+    """主任务 = 3D位置 + 夹爪闭合轴方向；保留绕闭合轴自转自由度。
+
+    堆叠雅可比是 [Jp; k*J_axis]，k 同时决定姿态任务在阻尼最小二乘里的相对权重。
+    k 和 rho 是实测选出来的：同一批 spawn 上量"调平到 4°/2mm 需要多久"，
+    k=20/rho=0.05 明显快于原来的 k=4/rho=0.10；按最小奇异值自适应加大阻尼的做法
+    实测反而完全不收敛，已弃用。
+    """
+    current_axis = current_axis / max(np.linalg.norm(current_axis), 1e-9)
+    target_axis = target_axis / max(np.linalg.norm(target_axis), 1e-9)
+    projector = np.eye(3) - np.outer(current_axis, current_axis)
+    J_axis = projector @ J6[3:, :]
+    w_des = k_axis * np.cross(current_axis, target_axis)
+    J = np.vstack([Jp, k_axis * J_axis])
+    e = np.concatenate([v_lin, w_des])
+    return damped_pinv(J, rho) @ e
+
+
+def solve_level_jaw_ik(model, H, tgt_pos, base_frame, q_seed, rng):
+    """离线求解"控制点到 tgt_pos 且夹爪闭合轴水平"的关节位形。
+
+    约束是 5 维（位置 3 + 闭合轴方向 2），绕闭合轴的自转留作冗余 —— 与在线
+    伺服的主任务一致。把姿态约成完整 6 维（额外要求严格垂直下抓）实测只有
+    5/12 个 spawn 有解，放开这一维后是 11/12。
+
+    两侧闭合轴符号都试（joint6 相差约 π），取限位余量最大的解，因为顶在
+    joint6=0 的行程端点正是"夹爪不平行"的直接成因。
+    返回 (q, sign)；无解返回 (None, None)。
+    """
+    jr = np.array([model.jnt_range[model.joint(j).id] for j in ARM_JOINTS])
+    d = mujoco.MjData(model)
+    starts = [np.asarray(q_seed, dtype=float), np.array(Q_INIT, dtype=float),
+              np.zeros(6)]
+    starts += [rng.uniform(jr[:, 0], jr[:, 1]) for _ in range(IK_RANDOM_STARTS)]
+    min_down = np.cos(np.radians(IK_APPROACH_MAX_TILT_DEG))
+    axis_tol = np.sin(np.radians(IK_AXIS_TOL_DEG))
+    best = None
+    for sign in (1.0, -1.0):
+        t_axis = base_frame[:, 1] * sign
+        for q0 in starts:
+            q = np.clip(np.asarray(q0, dtype=float), jr[:, 0], jr[:, 1])
+            converged = False
+            for _ in range(IK_MAX_ITERS):
+                d.qpos[H.arm_qadr] = q
+                mujoco.mj_kinematics(model, d)
+                mujoco.mj_comPos(model, d)
+                J6 = get_site_jacobian_6d(model, d, H.site_ee, H.arm_dof)
+                R = d.site_xmat[H.site_ee].reshape(3, 3)
+                d_world = R @ H.tcp_offset
+                e_p = tgt_pos - (d.site_xpos[H.site_ee] + d_world)
+                a = R[:, 1]
+                e_w = np.cross(a, t_axis)
+                if np.linalg.norm(e_p) < IK_POS_TOL and np.linalg.norm(e_w) < axis_tol:
+                    converged = True
+                    break
+                J = np.vstack([jac_at_offset(J6, d_world),
+                               (np.eye(3) - np.outer(a, a)) @ J6[3:, :]])
+                e = np.concatenate([np.clip(e_p, -0.05, 0.05),
+                                    np.clip(e_w, -0.5, 0.5)])
+                q = np.clip(q + damped_pinv(J, IK_DLS_RHO) @ e, jr[:, 0], jr[:, 1])
+            if not converged:
+                continue
+            down = -float(d.site_xmat[H.site_ee].reshape(3, 3)[2, 2])
+            if down < min_down:            # 太斜，直下抓会撞桌面或蹭到物体
+                continue
+            margin = float(np.min(np.minimum(q - jr[:, 0], jr[:, 1] - q)))
+            score = margin + 0.5 * down
+            if best is None or score > best[0]:
+                best = (score, q.copy(), sign, margin)
+        if best is not None and best[3] >= IK_GOOD_MARGIN:
+            break                          # 余量已经够大，不必再搜另一侧
+    return (None, None) if best is None else (best[1], best[2])
+
+
+def plan_repose_push(model, data, H):
+    """规划一次把螺丝刀推向可达中心的直线推动。
+
+    调平不可达的根因是物体落在工作空间边缘：那里冗余度被位置约束吃光，
+    闭合轴水平这个方向解不出来。与其丢掉整条 episode，不如闭爪当作实心块，
+    贴着桌面把杆身往 REPOSE_ANCHOR_XY 推一段，再重走抓取流程。
+
+    返回 (推动起点 xy, 推动终点 xy)；若物体已接近锚点或可推距离过短则返回 None。
+    """
+    c = object_center_xy(model, data, H.body_obj)
+    d = REPOSE_ANCHOR_XY - c
+    n = float(np.linalg.norm(d))
+    if n < REPOSE_MIN_PUSH:
+        return None
+    u = d / n
+    end_c = c + u * min(REPOSE_PUSH_DISTANCE, n)
+    lo = np.array([GREEN_X_MIN, GREEN_Y_MIN]) + REPOSE_GREEN_MARGIN
+    hi = np.array([GREEN_X_MAX, GREEN_Y_MAX]) - REPOSE_GREEN_MARGIN
+    end_c = np.clip(end_c, lo, hi)
+    travel = float(np.linalg.norm(end_c - c))
+    if travel < REPOSE_MIN_PUSH:
+        return None
+    # 起点必须落在物体水平包络之外，否则一放下去就压在杆身上。
+    obj_lo, obj_hi = object_extent_xy(model, data, H.body_obj)
+    half = 0.5 * (obj_hi - obj_lo)
+    reach = float(abs(half[0] * u[0]) + abs(half[1] * u[1]))
+    start = c - u * (reach + REPOSE_PUSH_CLEARANCE)
+    # 终点要在接触点之后再多走 travel，否则工具只走到物体后缘就停下，
+    # 物体根本没被推动。接触发生在离起点 REPOSE_PUSH_CLEARANCE 处。
+    return start, start + u * (REPOSE_PUSH_CLEARANCE + travel)
+
+
+def bilateral_grasp_contacts(model, data, H):
+    """返回左右手指当前是否分别与被抓物体发生接触。"""
+    touched = set()
+    for i in range(data.ncon):
+        contact = data.contact[i]
+        b1 = int(model.geom_bodyid[contact.geom1])
+        b2 = int(model.geom_bodyid[contact.geom2])
+        if b1 == H.body_obj and b2 in H.finger_bodies:
+            touched.add(b2)
+        elif b2 == H.body_obj and b1 in H.finger_bodies:
+            touched.add(b1)
+    return tuple(body_id in touched for body_id in H.finger_bodies)
 
 
 def arm3_qdot(J3, v_lin, rho=0.10):
@@ -203,7 +446,7 @@ K_YAW = 3.0              # 偏航保持/对齐增益。搬运全程就按住，�
 K_TOOL = 2.0             # 抓取前对齐夹爪姿态的增益
 
 
-def pos_yaw_qdot(J6, v_lin, yaw_err_rad, k_yaw=2.5, rho=0.10):
+def pos_yaw_qdot(J6, v_lin, yaw_err_rad, Jp=None, k_yaw=2.5, rho=0.10):
     """主任务 = 3 个位置 + 1 个偏航。6 自由度里仍留 2 个冗余。
 
     偏航放零空间按不住：从抓取点摆到盒子，底座要转 74°，要保持物体朝向不变
@@ -211,7 +454,7 @@ def pos_yaw_qdot(J6, v_lin, yaw_err_rad, k_yaw=2.5, rho=0.10):
     而盒子上方可达偏航是 -90~0 和 +60~+90 两个孤岛，中间 +15~+45 是空洞，
     一旦漂进 +60 那个岛就再也拧不回来了。所以必须进主任务。
     """
-    Jp = J6[:3, :]
+    Jp = J6[:3, :] if Jp is None else Jp
     Jyaw = J6[5:6, :]                    # 绕世界 z 的角速度行
     J = np.vstack([Jp, k_yaw * Jyaw])
     e = np.concatenate([v_lin, [k_yaw * yaw_err_rad]])
@@ -474,16 +717,18 @@ class Handles:
         self.arm_act = np.array([model.actuator(a).id for a in ARM_ACTUATORS])
         self.j8 = model.actuator("Joint8").id
         self.j9 = model.actuator("Joint9").id
+        self.finger_bodies = (model.body("link8").id, model.body("link9").id)
         self.cam_fixed = mujoco.mj_name2id(model, M.mjOBJ_CAMERA, rspec.CAM_FIXED)
         self.cam_wrist = mujoco.mj_name2id(model, M.mjOBJ_CAMERA, rspec.CAM_WRIST)
         self.tcp_offset = self._pad_offset(model)
 
     def _pad_offset(self, model):
-        """ee_site -> 两指夹持面中心（工具系）。
+        """ee_site -> 两指接触端面中心（工具系）。
 
         ee_site 挂在 link7 的 (0,0,0.08)，而 link8/link9 的 body 原点在
-        (0,±0.023831,0.016) —— ee_site 在指根上方 64mm，落在指尖处甚至指尖之外，
-        不是夹持面中心。从指垫碰撞 geom 的 AABB 反算真实中心。
+        (0,±0.023831,0.016)。手指碰撞网格沿工具 z 轴跨过 ee_site，但实际接触
+        桌面物体的是朝向物体的局部 +z 端面，不是整根手指 AABB 的几何中心。
+        取两指碰撞几何在工具系下的最大 z，作为闭合轴中点处的接触端面。
         """
         d = mujoco.MjData(model)
         d.qpos[self.arm_qadr] = Q_INIT
@@ -508,7 +753,28 @@ class Handles:
                             zs.append(float((R.T @ (w - p))[2]))
         if not zs:
             return np.zeros(3)
-        return np.array([0.0, 0.0, 0.5 * (min(zs) + max(zs))])
+        return np.array([0.0, 0.0, max(zs)])
+
+
+def configure_task_gripper(model, verbose=True):
+    """只提高本采集任务的夹爪位置伺服增益，不修改共享机器人 XML。"""
+    configured = []
+    for name in ("Joint8", "Joint9"):
+        aid = model.actuator(name).id
+        old_kp = float(model.actuator_gainprm[aid, 0])
+        old_kv = -float(model.actuator_biasprm[aid, 2])
+        if old_kp <= 0:
+            raise RuntimeError(f"夹爪执行器 {name} 不是有效的位置伺服，kp={old_kp}")
+        scale = np.sqrt(TASK_GRIPPER_KP / old_kp)
+        model.actuator_gainprm[aid, 0] = TASK_GRIPPER_KP
+        model.actuator_biasprm[aid, 1] = -TASK_GRIPPER_KP
+        model.actuator_biasprm[aid, 2] = -old_kv * scale
+        configured.append((name, old_kp, -model.actuator_biasprm[aid, 2]))
+    if verbose:
+        detail = ", ".join(
+            f"{name}: kp {old_kp:g}->{TASK_GRIPPER_KP:g}, kv={kv:.3f}"
+            for name, old_kp, kv in configured)
+        print(f"🤏 任务夹爪增力 | {detail}")
 
 
 def load_scene_tidyB(verbose=True):
@@ -516,6 +782,7 @@ def load_scene_tidyB(verbose=True):
     real_screwdriver / plasticbox / dynamic_pillar —— tidy_B 里都不存在。
     这里自己走等价流程，但相机镜像仍调 rspec 的那一个，保证与部署端逐字一致。"""
     model = mujoco.MjModel.from_xml_path(str(SCENE_PATH))
+    configure_task_gripper(model, verbose=verbose)
     rspec.apply_camera_overrides(model, verbose=verbose)   # 必须在建 MjData 之前
     data = mujoco.MjData(model)
 
@@ -556,6 +823,7 @@ def reset_scene(model, data, H, rng):
 
     q_base = np.array(model.body(OBJECT_BODY).quat, dtype=float)
     L_HALF = 0.13
+    sampled = None
     for _ in range(200):
         x = rng.uniform(*SPAWN_X_RANGE)
         y = rng.uniform(*SPAWN_Y_RANGE)
@@ -574,11 +842,21 @@ def reset_scene(model, data, H, rng):
         if (GREEN_X_MIN <= p1[0] <= GREEN_X_MAX and GREEN_X_MIN <= p2[0] <= GREEN_X_MAX
                 and GREEN_Y_MIN <= p1[1] <= GREEN_Y_MAX
                 and GREEN_Y_MIN <= p2[1] <= GREEN_Y_MAX):
+            sampled = {
+                "position": [float(x), float(y), float(SPAWN_DROP_Z)],
+                "quaternion": qq.tolist(),
+                "yaw_jitter_deg": float(np.degrees(dyaw)),
+            }
             break
+    if sampled is None:
+        raise RuntimeError("拒绝采样 200 次仍未找到绿区内的合法螺丝刀位姿")
     data.qvel[:] = 0
     mujoco.mj_forward(model, data)
     for _ in range(300):                # 落定
         mujoco.mj_step(model, data)
+    sampled["settled_position"] = data.xpos[H.body_obj].tolist()
+    sampled["settled_quaternion"] = data.qpos[H.obj_qadr + 3:H.obj_qadr + 7].tolist()
+    return sampled
 
 
 def get_drop_point(model, data, H, rng):
@@ -595,39 +873,120 @@ def get_drop_point(model, data, H, rng):
     return p
 
 
+def episode_is_complete(ep_dir):
+    """识别原子写盘的新 episode，并兼容修改前已完整写出的旧 episode。"""
+    ep_dir = Path(ep_dir)
+    fixed = ep_dir / "cam_fixed"
+    wrist = ep_dir / "cam_wrist"
+    core_complete = (
+        (ep_dir / "joint_data.npz").is_file()
+        and (ep_dir / "instruction.txt").is_file()
+        and fixed.is_dir() and any(fixed.glob("*.jpg"))
+        and wrist.is_dir() and any(wrist.glob("*.jpg"))
+    )
+    marker = ep_dir / "complete.json"
+    if marker.is_file():
+        try:
+            marked = bool(json.loads(marker.read_text(encoding="utf-8")).get("complete"))
+            return marked and core_complete
+        except (OSError, ValueError, TypeError):
+            return False
+    # 历史数据没有 complete.json；只有核心文件和两路非空图像都存在才视为完整。
+    return core_complete
+
+
+def write_episode_atomic(out_dir, slot, imgs_f, imgs_w, ep_qpos, ep_act,
+                         instruction, metadata):
+    """先写同盘临时目录，全部成功后再原子发布为 ep_N。"""
+    lengths = {len(imgs_f), len(imgs_w), len(ep_qpos), len(ep_act)}
+    if len(lengths) != 1 or not ep_qpos:
+        raise ValueError(
+            "episode 各数据流长度必须相同且非空："
+            f"fixed={len(imgs_f)} wrist={len(imgs_w)} "
+            f"qpos={len(ep_qpos)} actions={len(ep_act)}")
+    out_dir = Path(out_dir)
+    ep_dir = out_dir / f"ep_{slot}"
+    if ep_dir.exists():
+        raise FileExistsError(f"拒绝覆盖已有 episode 目录：{ep_dir}")
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix=f".ep_{slot}.tmp-", dir=out_dir))
+    try:
+        cf, cw = tmp_dir / "cam_fixed", tmp_dir / "cam_wrist"
+        cf.mkdir()
+        cw.mkdir()
+        for i, (a, b) in enumerate(zip(imgs_f, imgs_w)):
+            ok_f = cv2.imwrite(str(cf / f"{i:03d}.jpg"), cv2.cvtColor(a, cv2.COLOR_RGB2BGR))
+            ok_w = cv2.imwrite(str(cw / f"{i:03d}.jpg"), cv2.cvtColor(b, cv2.COLOR_RGB2BGR))
+            if not ok_f or not ok_w:
+                raise OSError(f"第 {i} 帧 JPEG 写入失败")
+        np.savez_compressed(
+            tmp_dir / "joint_data.npz",
+            qpos=np.asarray(ep_qpos, dtype=np.float32),
+            actions=np.asarray(ep_act, dtype=np.float32),
+        )
+        (tmp_dir / "instruction.txt").write_text(instruction, encoding="utf-8")
+        (tmp_dir / "metadata.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        (tmp_dir / "complete.json").write_text(
+            json.dumps({"complete": True, "episode": slot}) + "\n", encoding="utf-8")
+        os.replace(tmp_dir, ep_dir)
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+    return ep_dir
+
+
 # ==============================================================================
 # 采集主循环
 # ==============================================================================
 def collect(args):
     model, data = load_scene_tidyB()
     H = Handles(model)
-    os.makedirs(args.out_dir, exist_ok=True)
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     renderer = rspec.make_renderer(model)
     vopt = rspec.make_scene_option()        # 两端必须逐字一致，别自己写一份
 
-    done = set()
-    for d in os.listdir(args.out_dir):
-        if d.startswith("ep_") and os.path.isdir(os.path.join(args.out_dir, d)):
-            try:
-                done.add(int(d.split("_")[1]))
-            except ValueError:
-                pass
+    done, occupied = set(), set()
+    for ep_dir in out_dir.iterdir():
+        if not ep_dir.is_dir() or not ep_dir.name.startswith("ep_"):
+            continue
+        suffix = ep_dir.name.removeprefix("ep_")
+        if not suffix.isdigit():
+            continue
+        slot = int(suffix)
+        occupied.add(slot)
+        if episode_is_complete(ep_dir):
+            done.add(slot)
     start_have = len(done)
     if start_have >= args.target:
         print(f"✅ 已有 {start_have} 条，达到目标 {args.target}。")
         return
 
-    rng = np.random.default_rng(args.seed)
+    if args.seed is not None and args.seed < 0:
+        raise ValueError("--seed 必须是非负整数")
+    global_seed = (int(args.seed) if args.seed is not None else
+                   int(np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0]))
+    print(f"🌱 全局采样 seed: {global_seed}")
     viewer = mujoco.viewer.launch_passive(model, data) if not args.headless else None
     attempts = 0
+    attempts_by_slot = {}
     reasons = {}
 
     while len(done) < args.target:
         if viewer is not None and not viewer.is_running():
             break
+        slot = 0
+        while slot in occupied:
+            slot += 1
+        attempt_index = attempts_by_slot.get(slot, 0)
+        attempts_by_slot[slot] = attempt_index + 1
+        seed_seq = np.random.SeedSequence(global_seed, spawn_key=(slot, attempt_index))
+        attempt_seed = int(seed_seq.generate_state(1, dtype=np.uint64)[0])
+        rng = np.random.default_rng(attempt_seed)
         attempts += 1
-        reset_scene(model, data, H, rng)
+        reset_info = reset_scene(model, data, H, rng)
 
         # home 位姿在 GO_ZERO 到位之后才记录（见下），这样收臂也回到全 0，
         # 一条 episode 的首尾状态一致 —— 对 VLA 来说首尾不一致会让策略学到
@@ -640,21 +999,55 @@ def collect(args):
         imgs_f, imgs_w, ep_qpos, ep_act = [], [], [], []
         intentional_miss = rng.random() < MISS_PROB
         has_retried = False
+        grasp_retries = 0
         drop_point = get_drop_point(model, data, H, rng)
         grip_ref = None
         hold_dir = np.array([1.0, 0.0, 0.0])
         carry_z, carry_bot = [], []
+        max_slip_translation = 0.0
+        max_slip_rotation_deg = 0.0
+        max_gripper_force_n = 0.0
+        bilateral_contact_seen = False
+        grasp_verified = False
+        verify_stable_steps = 0
+        prelift_start = None
+        prelift_obj_z = None
+        prealign_stable_steps = 0
+        gripper_aligned = False
+        pregrasp_axis_error_deg = None
+        pregrasp_jaw_height_diff_m = None
+        prealign_best_axis_err = None
+        prealign_stall_steps = 0
+        prealign_unreachable = False
+        prealign_last_axis_err_deg = None
+        prealign_last_jaw_height_diff_m = None
+        jaw_axis_sign = None      # 由 IK 解确定；停滞时可翻到等价的另一侧
+        jaw_axis_flipped = False
+        ik_target_q = None
+        ik_move_obj_xy = None
+        ik_solved = False
+        repose_count = 0
+        repose_stage = None
+        repose_stage_steps = 0
+        repose_plan = None
+        phase_step_counts = {}
         t0 = time.time()
 
         while True:
             phase_steps += 1
+            phase_step_counts[phase] = phase_step_counts.get(phase, 0) + 1
             if phase_steps > DEADLOCK_STEPS:
                 fail_why = f"[{phase}] 阶段死锁"
                 break
 
             jaw_mid = jaw_mid_now(model, data)
-            tcp_pos = data.site_xpos[H.site_ee].copy()
+            J6 = get_site_jacobian_6d(model, data, H.site_ee, H.arm_dof)
+            tool_pos, tool_mat, J3 = control_point_kinematics(data, H, J6)
             obj_bot = object_bottom_z(model, data, H.body_obj)
+            max_gripper_force_n = max(
+                max_gripper_force_n,
+                float(np.max(np.abs(data.actuator_force[[H.j8, H.j9]]))),
+            )
 
             if data.xpos[H.body_obj][2] < Z_TABLE_TOP - 0.05:
                 fail_why = "螺丝刀掉到桌下"
@@ -663,14 +1056,13 @@ def collect(args):
             miss = np.array([0.0, 0.06, 0.0]) if (intentional_miss and not has_retried) \
                 else np.zeros(3)
             hover_point = np.array([jaw_mid[0], jaw_mid[1], SAFE_Z]) + miss
+            prealign_point = jaw_mid + miss + np.array([0.0, 0.0, PREALIGN_CLEARANCE])
             # 往下压 GRASP_DEPTH：指垫包住手柄更多，抗滑。miss 是 5% 概率的
             # 故意抓偏（纠错示范），不受这个影响。
             grasp_point = jaw_mid + miss - np.array([0.0, 0.0, GRASP_DEPTH])
 
             q_dot = np.zeros(6)
             grip = GRIP_OPEN
-            J6 = get_site_jacobian_6d(model, data, H.site_ee, H.arm_dof)
-            J3 = J6[:3, :]
 
             # ---- HOVER：移到抓取点正上方。只约束位置（不强制垂直下抓）----
             # ---- GO_ZERO：先从起手位姿 Q_INIT 走到关节全 0，再去抓 ----
@@ -683,41 +1075,242 @@ def collect(args):
                 dq = float(np.linalg.norm(q_err))
                 if dq < 0.06 or (phase_steps > int(800/SPEED_SCALE) and dq < 0.15):
                     home_qpos = data.qpos[H.arm_qadr].copy()
-                    home_point = tcp_pos.copy()
+                    home_point = tool_pos.copy()
                     phase, phase_steps = "HOVER", 0
                 else:
                     q_dot = (q_err / dq) * max(min(dq / 0.5 * 2.5, 2.5), 0.6) * SPEED_SCALE
 
             elif phase == "HOVER":
-                dist = np.linalg.norm(hover_point - tcp_pos)
+                dist = np.linalg.norm(hover_point - tool_pos)
                 if dist < 0.02 or (phase_steps > int(400/SPEED_SCALE) and dist < 0.05):
-                    phase, phase_steps = "DESCEND", 0
+                    phase, phase_steps = "IK_PREALIGN", 0
+                    ik_target_q = None
                 else:
-                    q_dot = damped_pinv(J3) @ compute_3d_velocity(tcp_pos, hover_point, 0.45)
-                    Rt = data.site_xmat[H.site_ee].reshape(3, 3)
-                    w = K_TOOL * get_orientation_error(grasp_tool_frame(model, data), Rt)
+                    q_dot = damped_pinv(J3) @ compute_3d_velocity(tool_pos, hover_point, 0.45)
+                    w = K_TOOL * get_orientation_error(grasp_tool_frame(model, data), tool_mat)
                     q_dot = q_dot + nullspace_qdot(J3, J6[3:], w)
 
-            # ---- DESCEND：末端小球下到夹取点中点 ----
-            elif phase == "DESCEND":
-                dist = np.linalg.norm(grasp_point - tcp_pos)
-                if dist < 0.006 or (phase_steps > int(500/SPEED_SCALE) and dist < 0.015):
-                    phase, phase_steps = "GRASP", 0
+            # ---- IK_PREALIGN：离线解出夹爪水平的关节位形，再关节空间走过去 ----
+            # 目标点取在手柄中心上方 IK_PREALIGN_CLEARANCE（≈悬停高度），
+            # 这段转移离物体还远，不会蹭到螺丝刀；余下的几厘米交给
+            # PREALIGN_GRIPPER 带着轴约束伺服下去 —— 那时已经在正确的分支上。
+            elif phase == "IK_PREALIGN":
+                grip = GRIP_OPEN
+                if ik_target_q is None:
+                    ik_q, ik_sign = solve_level_jaw_ik(
+                        model, H,
+                        jaw_mid + miss + np.array([0.0, 0.0, IK_PREALIGN_CLEARANCE]),
+                        grasp_tool_frame(model, data),
+                        data.qpos[H.arm_qadr], rng)
+                    if ik_q is None:
+                        # 这个位形下不存在夹爪水平的关节解 -> 走预调整备用路径
+                        prealign_unreachable = True
+                        if repose_count >= MAX_REPOSE_RETRIES:
+                            fail_why = "无夹爪水平的关节解，且预调整已用尽"
+                            break
+                        phase, phase_steps = "REPOSE_OBJECT", 0
+                        repose_stage, repose_stage_steps, repose_plan = "LIFT_OUT", 0, None
+                        continue
+                    ik_target_q, jaw_axis_sign, ik_solved = ik_q, ik_sign, True
+                    ik_move_obj_xy = object_center_xy(model, data, H.body_obj)
+                # 转移途中把螺丝刀碰跑了就作废：抓取点已经不是解算时那个了。
+                if (ik_move_obj_xy is not None
+                        and np.linalg.norm(object_center_xy(model, data, H.body_obj)
+                                           - ik_move_obj_xy) > IK_OBJECT_DISTURB_TOL):
+                    fail_why = "IK 预对齐转移途中碰动了螺丝刀"
+                    break
+                q_err = ik_target_q - data.qpos[H.arm_qadr]
+                dq = float(np.linalg.norm(q_err))
+                elapsed = phase_steps * model.opt.timestep
+                if dq < IK_MOVE_TOL or (elapsed >= IK_MOVE_TIMEOUT
+                                        and dq < 2 * IK_MOVE_TOL):
+                    phase, phase_steps = "PREALIGN_GRIPPER", 0
+                    prealign_stable_steps = 0
+                    prealign_best_axis_err = None
+                    prealign_stall_steps = 0
+                elif elapsed >= 1.5 * IK_MOVE_TIMEOUT:
+                    fail_why = f"IK 预对齐关节到位失败 (残差 {dq:.3f} rad)"
+                    break
                 else:
-                    q_dot = damped_pinv(J3) @ compute_3d_velocity(tcp_pos, grasp_point, 0.15)
-                    Rt = data.site_xmat[H.site_ee].reshape(3, 3)
-                    w = K_TOOL * get_orientation_error(grasp_tool_frame(model, data), Rt)
+                    q_dot = (q_err / dq) * max(min(dq / 0.5 * 2.5, 2.5), 0.6) * SPEED_SCALE
+
+            # ---- PREALIGN_GRIPPER：位置保持在悬停点，先把左右夹爪调到等高 ----
+            elif phase == "PREALIGN_GRIPPER":
+                if jaw_axis_sign is None:
+                    jaw_axis_sign = jaw_axis_sign_near(model, data, tool_mat)
+                target_axis = horizontal_jaw_target(
+                    model, data, tool_mat, jaw_axis_sign)
+                axis_err_deg, jaw_height_diff = jaw_alignment_error(
+                    data, H, tool_mat, target_axis)
+                dist = np.linalg.norm(prealign_point - tool_pos)
+                v = compute_3d_velocity(tool_pos, prealign_point, 0.12)
+                # 位置到位后冻结位置任务：只留很小的保位增益防漂，
+                # 剩下的自由度全部交给闭合轴调平。
+                frozen = dist <= PREALIGN_FREEZE_DIST
+                if frozen:
+                    v = v * PREALIGN_FREEZE_GAIN
+                q_dot = pos_jaw_axis_qdot(
+                    J6, J3, v, tool_mat[:, 1], target_axis)
+
+                aligned_now = (
+                    axis_err_deg <= JAW_AXIS_TOL_DEG
+                    and jaw_height_diff <= JAW_HEIGHT_TOL
+                    and dist <= PREALIGN_FREEZE_DIST
+                )
+                prealign_stable_steps = prealign_stable_steps + 1 if aligned_now else 0
+                # 收敛停滞检测：位置已到位、残差仍超容差，却连续这么久压不下去，
+                # 说明这个位形上"水平"根本解不出来，不必空等满超时。
+                # 残差取两项对各自容差的归一化最大值，避免只盯轴误差时
+                # 高度差还在慢慢收敛却被判死。
+                residual = max(axis_err_deg / max(JAW_AXIS_TOL_DEG, 1e-9),
+                               jaw_height_diff / max(JAW_HEIGHT_TOL, 1e-9))
+                if not frozen or residual <= 1.0:
+                    prealign_stall_steps = 0
+                    prealign_best_axis_err = residual
+                elif (prealign_best_axis_err is None
+                        or residual < prealign_best_axis_err - PREALIGN_STALL_IMPROVE_RATIO):
+                    prealign_best_axis_err = residual
+                    prealign_stall_steps = 0
+                else:
+                    prealign_stall_steps += 1
+                stalled = prealign_stall_steps >= max(
+                    1, int(PREALIGN_STALL_WINDOW / model.opt.timestep))
+
+                if prealign_stable_steps >= max(
+                        1, int(PREALIGN_SETTLE_TIME / model.opt.timestep)):
+                    gripper_aligned = True
+                    phase, phase_steps = "DESCEND", 0
+                elif stalled or phase_steps * model.opt.timestep >= PREALIGN_TIMEOUT:
+                    # 第一优先补救：翻到等价的另一侧闭合轴解（joint6 差 π，
+                    # 那一侧离行程端点远得多）。只在**真停滞**时翻：残差还在
+                    # 稳步下降却因超时翻过去，会白白从 180° 重新收敛一遍。
+                    if stalled and not jaw_axis_flipped:
+                        jaw_axis_sign = -jaw_axis_sign
+                        jaw_axis_flipped = True
+                        prealign_stall_steps = 0
+                        prealign_best_axis_err = None
+                        prealign_stable_steps = 0
+                        phase_steps = 0
+                        continue
+                    prealign_unreachable = True
+                    prealign_last_axis_err_deg = axis_err_deg
+                    prealign_last_jaw_height_diff_m = jaw_height_diff
+                    if repose_count >= MAX_REPOSE_RETRIES:
+                        fail_why = (
+                            f"夹爪调平失败 (轴误差 {axis_err_deg:.1f}°, "
+                            f"高度差 {jaw_height_diff*1000:.1f}mm, "
+                            f"已预调整 {repose_count} 次)")
+                        break
+                    phase, phase_steps = "REPOSE_OBJECT", 0
+                    repose_stage, repose_stage_steps, repose_plan = "LIFT_OUT", 0, None
+
+            # ---- REPOSE_OBJECT：调平不可达时的备用路径 ----
+            # 闭爪当实心块，贴桌把螺丝刀往可达中心推一段，然后回 HOVER 重走抓取。
+            # 这段动作会完整录进 episode，metadata 里用 repose_used 标记以便事后筛选。
+            elif phase == "REPOSE_OBJECT":
+                grip = GRIP_CLOSE
+                repose_stage_steps += 1
+                if repose_plan is None:
+                    repose_plan = plan_repose_push(model, data, H)
+                    if repose_plan is None:
+                        fail_why = (
+                            "夹爪调平失败且物体已在可达中心附近，无可用预调整方向")
+                        break
+                if phase_steps * model.opt.timestep >= REPOSE_TIMEOUT:
+                    fail_why = "预调整螺丝刀超时"
+                    break
+                push_start, push_end = repose_plan
+                push_z = Z_TABLE_TOP + REPOSE_PUSH_Z_OFFSET
+                stage_timeout = repose_stage_steps * model.opt.timestep >= REPOSE_STAGE_TIMEOUT
+
+                if repose_stage == "LIFT_OUT":
+                    tgt = np.array([tool_pos[0], tool_pos[1], SAFE_Z])
+                    if tool_pos[2] >= SAFE_Z - 0.01 or stage_timeout:
+                        repose_stage, repose_stage_steps = "APPROACH", 0
+                elif repose_stage == "APPROACH":
+                    tgt = np.array([push_start[0], push_start[1], SAFE_Z])
+                    if np.linalg.norm(tgt[:2] - tool_pos[:2]) < 0.012 or stage_timeout:
+                        repose_stage, repose_stage_steps = "DOWN", 0
+                elif repose_stage == "DOWN":
+                    tgt = np.array([push_start[0], push_start[1], push_z])
+                    if abs(tool_pos[2] - push_z) < 0.006 or stage_timeout:
+                        repose_stage, repose_stage_steps = "PUSH", 0
+                elif repose_stage == "PUSH":
+                    tgt = np.array([push_end[0], push_end[1], push_z])
+                    if np.linalg.norm(tgt[:2] - tool_pos[:2]) < 0.008 or stage_timeout:
+                        repose_stage, repose_stage_steps = "RETREAT", 0
+                else:                                   # RETREAT
+                    tgt = np.array([tool_pos[0], tool_pos[1], SAFE_Z])
+                    if tool_pos[2] >= SAFE_Z - 0.01 or stage_timeout:
+                        repose_count += 1
+                        prealign_stable_steps = 0
+                        prealign_best_axis_err = None
+                        prealign_stall_steps = 0
+                        jaw_axis_sign, jaw_axis_flipped = None, False
+                        ik_target_q, ik_move_obj_xy = None, None
+                        gripper_aligned = False
+                        repose_stage, repose_plan = None, None
+                        phase, phase_steps, wait_steps = "HOVER", 0, 0
+
+                if phase == "REPOSE_OBJECT":
+                    v = compute_3d_velocity(tool_pos, tgt, REPOSE_SPEED)
+                    q_dot = damped_pinv(J3) @ v
+                    w = K_TOOL * get_orientation_error(
+                        grasp_tool_frame(model, data), tool_mat)
                     q_dot = q_dot + nullspace_qdot(J3, J6[3:], w)
+
+            # ---- DESCEND：保持闭合轴水平，下到夹取点中点 ----
+            elif phase == "DESCEND":
+                dist = np.linalg.norm(grasp_point - tool_pos)
+                target_axis = horizontal_jaw_target(
+                    model, data, tool_mat, jaw_axis_sign)
+                axis_err_deg, jaw_height_diff = jaw_alignment_error(
+                    data, H, tool_mat, target_axis)
+                aligned_now = (
+                    axis_err_deg <= JAW_AXIS_TOL_DEG
+                    and jaw_height_diff <= JAW_HEIGHT_TOL
+                )
+                # 旧兜底允许 15mm 误差，实测会横向偏 12mm、垂直浅 9mm 就闭合，
+                # 只夹到手柄边缘。兜底只能略放宽，不能大于 GRASP_DEPTH 本身。
+                arrived = dist < 0.004 or (
+                    phase_steps > int(1000/SPEED_SCALE) and dist < 0.006)
+                if arrived and aligned_now:
+                    pregrasp_axis_error_deg = axis_err_deg
+                    pregrasp_jaw_height_diff_m = jaw_height_diff
+                    phase, phase_steps = "GRASP", 0
+                elif phase_steps * model.opt.timestep >= DESCEND_ALIGN_TIMEOUT:
+                    # 下降段迟迟不能同时满足到位与水平：先试等价的另一侧解，
+                    # 再退到预调整备用路径，而不是硬等到 DEADLOCK_STEPS 丢整条。
+                    if not jaw_axis_flipped:
+                        jaw_axis_sign = -jaw_axis_sign
+                        jaw_axis_flipped = True
+                        phase_steps = 0
+                        continue
+                    prealign_unreachable = True
+                    prealign_last_axis_err_deg = axis_err_deg
+                    prealign_last_jaw_height_diff_m = jaw_height_diff
+                    if repose_count >= MAX_REPOSE_RETRIES:
+                        fail_why = (
+                            f"下降段无法保持夹爪水平 (轴误差 {axis_err_deg:.1f}°, "
+                            f"高度差 {jaw_height_diff*1000:.1f}mm, "
+                            f"已预调整 {repose_count} 次)")
+                        break
+                    phase, phase_steps = "REPOSE_OBJECT", 0
+                    repose_stage, repose_stage_steps, repose_plan = "LIFT_OUT", 0, None
+                else:
+                    v = compute_3d_velocity(tool_pos, grasp_point, 0.15)
+                    q_dot = pos_jaw_axis_qdot(
+                        J6, J3, v, tool_mat[:, 1], target_axis)
 
             elif phase == "GRASP":
                 grip = GRIP_CLOSE
                 if step_counter % STEPS_PER_RECORD == 0:
                     wait_steps += 1
                 if wait_steps >= int(0.5 * FPS):
-                    phase, phase_steps, wait_steps = "LIFT", 0, 0
-                    # arc_start / arc_end / vec_xy / L_sq 移到 LIFT 结束时再算：
-                    # 抬升之后 TCP 高度才是抛物线真正的起点。
-                    grip_ref = jaw_mid - tcp_pos
+                    phase, phase_steps, wait_steps = "VERIFY_GRASP", 0, 0
+                    prelift_start = tool_pos.copy()
+                    prelift_obj_z = float(data.xpos[H.body_obj][2])
+                    verify_stable_steps = 0
                     # 记下抓取瞬间的螺丝刀朝向。搬运全程按住这个偏航 ——
                     # 放任不管的话它会被底座旋转带到 +57°，而盒子上方可达偏航是
                     # -90~0 和 +60~+90 两个孤岛，+15~+45 是不可达空洞：
@@ -729,29 +1322,81 @@ def collect(args):
                     hold_dir = box_long_axis(model, data, H.body_box,
                                              ref_dir=np.array([h_g[0], h_g[1], 0.0]))
 
+            # ---- VERIFY_GRASP：慢速试提，离桌且双指接触稳定后才标定抓取参考 ----
+            # 旧流程在物体仍贴桌时记录 grip_ref。试提时手柄在两指间自然就位产生的
+            # 位移会被误判为滑移，随后 RECOVER_OPEN 主动张爪，看起来就像自己掉落。
+            elif phase == "VERIFY_GRASP":
+                grip = GRIP_CLOSE
+                left_contact, right_contact = bilateral_grasp_contacts(model, data, H)
+                bilateral = left_contact and right_contact
+                bilateral_contact_seen = bilateral_contact_seen or bilateral
+                # 用物体 body 的相对上升量判断离桌；object_bottom_z() 基于保守 AABB，
+                # 初始值可能低于真实桌面，不能拿绝对高度做这一步的判据。
+                cleared = (float(data.xpos[H.body_obj][2]) >=
+                           prelift_obj_z + PRELIFT_CLEARANCE)
+
+                if bilateral and cleared:
+                    verify_stable_steps += 1
+                    if verify_stable_steps >= max(
+                            1, int(PRELIFT_SETTLE_TIME / model.opt.timestep)):
+                        grip_ref = relative_object_pose(data, H, tool_pos, tool_mat)
+                        grasp_verified = True
+                        _, _, h_g = grasp_geometry(model, data)
+                        hold_dir = box_long_axis(
+                            model, data, H.body_box,
+                            ref_dir=np.array([h_g[0], h_g[1], 0.0]))
+                        phase, phase_steps = "LIFT", 0
+                else:
+                    verify_stable_steps = 0
+                    target = prelift_start + np.array([0.0, 0.0, PRELIFT_DISTANCE])
+                    v = compute_3d_velocity(tool_pos, target, PRELIFT_SPEED)
+                    _, _, h_now = grasp_geometry(model, data)
+                    q_dot = pos_yaw_qdot(J6, v, yaw_error(h_now, hold_dir), Jp=J3)
+                    q_dot = q_dot + nullspace_qdot(
+                        J3, J6[3:], level_and_yaw_twist(h_now))
+
+                if phase == "VERIFY_GRASP" and (
+                        phase_steps * model.opt.timestep >= PRELIFT_TIMEOUT):
+                    if grasp_retries >= MAX_GRASP_RETRIES:
+                        fail_why = "预抬验证失败：物体未离桌或未保持双指接触"
+                        break
+                    phase, phase_steps, wait_steps = "RECOVER_OPEN", 0, 0
+                    continue
+
             # ---- LIFT：先原地垂直抬到走廊里，再开始横move ----
             # 抛物线的起点是抓取点(z≈0.75)，若直接开始横move，伺服要边走边爬，
             # 而虚拟兔子只前瞻 0.10，整段都在追 —— 物体中段实测只有 0.73~0.77，
             # 低于盒顶 0.79，[C2] 必然判不过。先抬够再走。
             elif phase == "LIFT":
                 grip = GRIP_CLOSE
+                if grip_ref is not None:
+                    slip_t, slip_r = grasp_pose_error(
+                        grip_ref, relative_object_pose(data, H, tool_pos, tool_mat))
+                    max_slip_translation = max(max_slip_translation, slip_t)
+                    max_slip_rotation_deg = max(max_slip_rotation_deg, slip_r)
+                    if slip_t > SLIP_TRANSLATION_TOL or slip_r > SLIP_ROTATION_TOL_DEG:
+                        if grasp_retries >= MAX_GRASP_RETRIES:
+                            fail_why = "抬升阶段重复滑移，超过重抓上限"
+                            break
+                        phase, phase_steps, wait_steps = "RECOVER_OPEN", 0, 0
+                        continue
                 need = Z_CORRIDOR_LO + 0.012 - obj_bot      # 物体底还差多少
                 if need <= 0 or phase_steps > int(1200/SPEED_SCALE):
                     phase, phase_steps = "MOVE_ARC", 0
-                    arc_start = tcp_pos.copy()
+                    arc_start = tool_pos.copy()
                     arc_end = drop_point.copy()
-                    arc_end[2] = max(arc_end[2], Z_CORRIDOR_LO + (tcp_pos[2] - obj_bot))
+                    arc_end[2] = max(arc_end[2], Z_CORRIDOR_LO + (tool_pos[2] - obj_bot))
                     vec_xy = arc_end[:2] - arc_start[:2]
                     L_sq = float(np.dot(vec_xy, vec_xy)) or 1e-6
                 else:
-                    up = np.array([tcp_pos[0], tcp_pos[1],
-                                   min(tcp_pos[2] + need, Z_CORRIDOR_HI)])
-                    v = compute_3d_velocity(tcp_pos, up, 0.35)
+                    up = np.array([tool_pos[0], tool_pos[1],
+                                   min(tool_pos[2] + need, Z_CORRIDOR_HI)])
+                    v = compute_3d_velocity(tool_pos, up, LIFT_SPEED)
                     _, _, h_now = grasp_geometry(model, data)
                     if LOCK_WRIST_AFTER_GRASP:
                         q_dot = arm3_qdot(J3, v)      # 腕部锁死，姿态不可控
                     else:
-                        q_dot = pos_yaw_qdot(J6, v, yaw_error(h_now, hold_dir))
+                        q_dot = pos_yaw_qdot(J6, v, yaw_error(h_now, hold_dir), Jp=J3)
                         q_dot = q_dot + nullspace_qdot(J3, J6[3:],
                                                        level_and_yaw_twist(h_now))
 
@@ -759,21 +1404,27 @@ def collect(args):
             elif phase == "MOVE_ARC":
                 grip = GRIP_CLOSE
                 if grip_ref is not None:
-                    slip = np.linalg.norm((jaw_mid - tcp_pos) - grip_ref)
-                    if slip > SLIP_TOL:
+                    slip_t, slip_r = grasp_pose_error(
+                        grip_ref, relative_object_pose(data, H, tool_pos, tool_mat))
+                    max_slip_translation = max(max_slip_translation, slip_t)
+                    max_slip_rotation_deg = max(max_slip_rotation_deg, slip_r)
+                    if slip_t > SLIP_TRANSLATION_TOL or slip_r > SLIP_ROTATION_TOL_DEG:
                         if dropped_into_box(model, data, H):
                             fail_why = "螺丝刀已掉进盒子，不重抓，整条作废"
                             break
+                        if grasp_retries >= MAX_GRASP_RETRIES:
+                            fail_why = "搬运阶段重复滑移，超过重抓上限"
+                            break
                         phase, phase_steps, wait_steps = "RECOVER_OPEN", 0, 0
                         continue
-                w = tcp_pos[:2] - arc_start[:2]
+                w = tool_pos[:2] - arc_start[:2]
                 p = float(np.clip(np.dot(w, vec_xy) / L_sq if L_sq > 1e-6 else 1.0, 0.0, 1.0))
-                if p >= 0.97 and np.linalg.norm(arc_end - tcp_pos) < 0.035:
+                if p >= 0.97 and np.linalg.norm(arc_end - tool_pos) < 0.035:
                     phase, phase_steps = "ALIGN", 0
                 else:
-                    # 让**物体包络中心**落到投放点，而不是让 TCP 落到投放点
+                    # 让**物体包络中心**落到投放点，而不是让夹持中心落到投放点
                     lead = drop_point[:2] - (object_center_xy(model, data, H.body_obj)
-                                             - tcp_pos[:2])
+                                             - tool_pos[:2])
                     vec_xy = lead - arc_start[:2]
                     L_sq = float(np.dot(vec_xy, vec_xy)) or 1e-6
                     arc_end[:2] = lead
@@ -781,27 +1432,27 @@ def collect(args):
                     txy = arc_start[:2] + vec_xy * pt
                     tz = arc_start[2] + (arc_end[2] - arc_start[2]) * pt \
                         + H_PEAK * np.sin(pt * np.pi)
-                    # [C2] 约束的是**物体**最低点，不是 TCP。物体挂在夹爪下方，
-                    # sag = TCP 到物体最低点的落差，每步实测（姿态会变，不是常数）。
-                    sag = tcp_pos[2] - obj_bot
+                    # [C2] 约束的是**物体**最低点，不是夹持中心。物体挂在夹爪下方，
+                    # sag = 夹持中心到物体最低点的落差，每步实测（姿态会变，不是常数）。
+                    sag = tool_pos[2] - obj_bot
                     tz = float(np.clip(tz,
                                        Z_CORRIDOR_LO + sag,      # 物体底 > 盒顶+裕度
                                        Z_CORRIDOR_HI))
                     rabbit = np.array([txy[0], txy[1], tz])
                     _, _, h_now = grasp_geometry(model, data)
                     # 主任务：位置 + 偏航保持
-                    v = compute_3d_velocity(tcp_pos, rabbit, 0.45)
+                    v = compute_3d_velocity(tool_pos, rabbit, MOVE_SPEED)
                     if LOCK_WRIST_AFTER_GRASP:
                         q_dot = arm3_qdot(J3, v)
                     else:
-                        q_dot = pos_yaw_qdot(J6, v, yaw_error(h_now, hold_dir))
+                        q_dot = pos_yaw_qdot(J6, v, yaw_error(h_now, hold_dir), Jp=J3)
                         # 零空间：把螺丝刀压回水平
                         q_dot = q_dot + nullspace_qdot(
                             J3, J6[3:], level_and_yaw_twist(h_now))
                     # [C2] 只在真正横越的一段统计：p<0.2 是起抬、p>0.9 是入箱下降，
                     # 这两段必然穿过盒顶高度，算进去等于永远判不过。
                     if 0.2 <= p <= 0.9:
-                        carry_z.append(float(tcp_pos[2]))
+                        carry_z.append(float(tool_pos[2]))
                         carry_bot.append(obj_bot)
 
             # ---- ALIGN：原地把偏航拧进装箱安全锥，再松手 ----
@@ -810,10 +1461,17 @@ def collect(args):
             elif phase == "ALIGN":
                 grip = GRIP_CLOSE
                 if grip_ref is not None:
-                    if np.linalg.norm((jaw_mid - tcp_pos) - grip_ref) > SLIP_TOL:
+                    slip_t, slip_r = grasp_pose_error(
+                        grip_ref, relative_object_pose(data, H, tool_pos, tool_mat))
+                    max_slip_translation = max(max_slip_translation, slip_t)
+                    max_slip_rotation_deg = max(max_slip_rotation_deg, slip_r)
+                    if slip_t > SLIP_TRANSLATION_TOL or slip_r > SLIP_ROTATION_TOL_DEG:
                         # ALIGN 已经在盒子正上方了，脱手基本必然落进盒里
                         if dropped_into_box(model, data, H):
                             fail_why = "螺丝刀已掉进盒子，不重抓，整条作废"
+                            break
+                        if grasp_retries >= MAX_GRASP_RETRIES:
+                            fail_why = "对齐阶段重复滑移，超过重抓上限"
                             break
                         phase, phase_steps, wait_steps = "RECOVER_OPEN", 0, 0
                         continue
@@ -830,10 +1488,10 @@ def collect(args):
                 if LOCK_WRIST_AFTER_GRASP or (aligned and placed) or phase_steps > int(1500/SPEED_SCALE):
                     phase, phase_steps = "LOWER_IN", 0
                 else:
-                    end = tcp_pos.copy()
-                    end[:2] = tcp_pos[:2] + shift      # 按实测越界量平移
-                    v = compute_3d_velocity(tcp_pos, end, 0.10)
-                    q_dot = pos_yaw_qdot(J6, v, yaw_error(h_now, tgt))
+                    end = tool_pos.copy()
+                    end[:2] = tool_pos[:2] + shift      # 按实测越界量平移
+                    v = compute_3d_velocity(tool_pos, end, 0.10)
+                    q_dot = pos_yaw_qdot(J6, v, yaw_error(h_now, tgt), Jp=J3)
                     q_dot = q_dot + nullspace_qdot(J3, J6[3:], level_and_yaw_twist(h_now))
 
             # ---- LOWER_IN：下放到贴近盒底再松手 ----
@@ -841,16 +1499,24 @@ def collect(args):
             # 就翘起来架在沿上。改成先放到离盒底 12mm 再张爪，基本是"放"而不是"扔"。
             elif phase == "LOWER_IN":
                 grip = GRIP_CLOSE
+                if grip_ref is not None:
+                    slip_t, slip_r = grasp_pose_error(
+                        grip_ref, relative_object_pose(data, H, tool_pos, tool_mat))
+                    max_slip_translation = max(max_slip_translation, slip_t)
+                    max_slip_rotation_deg = max(max_slip_rotation_deg, slip_r)
+                    if slip_t > SLIP_TRANSLATION_TOL or slip_r > SLIP_ROTATION_TOL_DEG:
+                        fail_why = "盒内下放阶段夹持相对位姿失稳"
+                        break
                 need = obj_bot - (Z_BOX_INNER_FLOOR + Z_PLACE_CLEAR)
                 if need <= 0 or phase_steps > int(900/SPEED_SCALE):
                     phase, phase_steps, wait_steps = "RELEASE", 0, 0
                 else:
                     shift, _ = fit_shift_xy(model, data, H)
-                    end = np.array([tcp_pos[0] + shift[0], tcp_pos[1] + shift[1],
-                                    tcp_pos[2] - need])
+                    end = np.array([tool_pos[0] + shift[0], tool_pos[1] + shift[1],
+                                    tool_pos[2] - need])
                     _, _, h_now2 = grasp_geometry(model, data)
-                    v = compute_3d_velocity(tcp_pos, end, 0.10)
-                    q_dot = pos_yaw_qdot(J6, v, yaw_error(h_now2, tgt))
+                    v = compute_3d_velocity(tool_pos, end, 0.10)
+                    q_dot = pos_yaw_qdot(J6, v, yaw_error(h_now2, tgt), Jp=J3)
                     q_dot = q_dot + nullspace_qdot(J3, J6[3:],
                                                    level_and_yaw_twist(h_now2))
             elif phase == "RECOVER_OPEN":
@@ -859,6 +1525,19 @@ def collect(args):
                     wait_steps += 1
                 if wait_steps >= int(0.3 * FPS):
                     has_retried, grip_ref = True, None
+                    grasp_retries += 1
+                    grasp_verified = False
+                    verify_stable_steps = 0
+                    prelift_start = None
+                    prelift_obj_z = None
+                    prealign_stable_steps = 0
+                    prealign_best_axis_err = None
+                    prealign_stall_steps = 0
+                    jaw_axis_sign, jaw_axis_flipped = None, False
+                    ik_target_q, ik_move_obj_xy = None, None
+                    gripper_aligned = False
+                    pregrasp_axis_error_deg = None
+                    pregrasp_jaw_height_diff_m = None
                     phase, phase_steps, wait_steps = "HOVER", 0, 0
 
             elif phase == "RELEASE":
@@ -867,16 +1546,16 @@ def collect(args):
                     wait_steps += 1
                 if wait_steps >= int(0.4 * FPS):
                     phase, phase_steps, wait_steps = "RETURN_ARC", 0, 0
-                    ret_start = tcp_pos.copy()
+                    ret_start = tool_pos.copy()
                     ret_end = home_point.copy()
                     ret_vec = ret_end[:2] - ret_start[:2]
                     ret_L = float(np.dot(ret_vec, ret_vec))
 
             elif phase == "RETURN_ARC":
                 grip = GRIP_OPEN
-                w = tcp_pos[:2] - ret_start[:2]
+                w = tool_pos[:2] - ret_start[:2]
                 p = float(np.clip(np.dot(w, ret_vec) / ret_L if ret_L > 1e-6 else 1.0, 0.0, 1.0))
-                if p >= 0.97 and np.linalg.norm(ret_end - tcp_pos) < 0.05:
+                if p >= 0.97 and np.linalg.norm(ret_end - tool_pos) < 0.05:
                     phase, phase_steps = "RETURN_JOINT", 0
                 else:
                     pt = float(np.clip(p + 0.10, 0.0, 1.0))
@@ -884,7 +1563,7 @@ def collect(args):
                     tz = ret_start[2] + (ret_end[2] - ret_start[2]) * pt \
                         + RET_H_PEAK * np.sin(pt * np.pi)
                     rabbit = np.array([txy[0], txy[1], tz])
-                    q_dot = damped_pinv(J3) @ compute_3d_velocity(tcp_pos, rabbit, 0.55)
+                    q_dot = damped_pinv(J3) @ compute_3d_velocity(tool_pos, rabbit, 0.55)
 
             elif phase == "RETURN_JOINT":
                 grip = GRIP_OPEN
@@ -976,7 +1655,7 @@ def collect(args):
             elif not carry_z:
                 success, fail_why = False, "没采到搬运段"
             elif max(carry_z) > Z_FLASHLIGHT_TOP:
-                success, fail_why = False, f"[C2] TCP 最高 {max(carry_z):.4f} 越过手电筒顶"
+                success, fail_why = False, f"[C2] 夹持中心最高 {max(carry_z):.4f} 越过手电筒顶"
             elif min(carry_bot) < Z_BOX_WALL_TOP:
                 success, fail_why = False, (f"[C2] 物体最低 {min(carry_bot):.4f} 低于盒顶 "
                                             f"{Z_BOX_WALL_TOP}")
@@ -989,22 +1668,72 @@ def collect(args):
                 print("  ⚠ 失败统计: " + "; ".join(f"{k} ×{v}" for k, v in top))
             continue
 
-        # ---- 写盘（格式与既有数据集一致）----
-        slot = next((i for i in range(args.target) if i not in done),
-                    max(done) + 1 if done else 0)
-        ep_dir = os.path.join(args.out_dir, f"ep_{slot}")
-        cf, cw = os.path.join(ep_dir, "cam_fixed"), os.path.join(ep_dir, "cam_wrist")
-        os.makedirs(cf, exist_ok=True)
-        os.makedirs(cw, exist_ok=True)
-        for i, (a, b) in enumerate(zip(imgs_f, imgs_w)):
-            cv2.imwrite(os.path.join(cf, f"{i:03d}.jpg"), cv2.cvtColor(a, cv2.COLOR_RGB2BGR))
-            cv2.imwrite(os.path.join(cw, f"{i:03d}.jpg"), cv2.cvtColor(b, cv2.COLOR_RGB2BGR))
-        np.savez_compressed(os.path.join(ep_dir, "joint_data.npz"),
-                            qpos=np.array(ep_qpos, dtype=np.float32),
-                            actions=np.array(ep_act, dtype=np.float32))
-        with open(os.path.join(ep_dir, "instruction.txt"), "w", encoding="utf-8") as f:
-            f.write(str(rng.choice(LANGUAGE_INSTRUCTIONS)))
+        # ---- 写盘（保持旧格式，并增加元数据与完成标记）----
+        instruction = str(rng.choice(LANGUAGE_INSTRUCTIONS))
+        phase_durations = {
+            name: round(steps * model.opt.timestep, 6)
+            for name, steps in phase_step_counts.items()
+        }
+        metadata = {
+            "schema_version": 1,
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "episode": slot,
+            "attempt_index": attempt_index,
+            "global_attempt": attempts,
+            "requested_seed": args.seed,
+            "global_seed": global_seed,
+            "attempt_seed": attempt_seed,
+            "initial_object": reset_info,
+            "drop_point": drop_point.tolist(),
+            "intentional_miss": bool(intentional_miss),
+            "recovered": bool(has_retried),
+            "grasp_retries": grasp_retries,
+            "grasp_verified": bool(grasp_verified),
+            "bilateral_contact_seen": bool(bilateral_contact_seen),
+            "gripper_aligned_before_grasp": bool(gripper_aligned),
+            "pregrasp_jaw_axis_error_deg": pregrasp_axis_error_deg,
+            "pregrasp_jaw_height_diff_m": pregrasp_jaw_height_diff_m,
+            "ik_prealign_solved": bool(ik_solved),
+            "jaw_axis_sign": None if jaw_axis_sign is None else float(jaw_axis_sign),
+            "jaw_axis_flipped": bool(jaw_axis_flipped),
+            "prealign_unreachable": bool(prealign_unreachable),
+            "prealign_last_axis_error_deg": prealign_last_axis_err_deg,
+            "prealign_last_jaw_height_diff_m": prealign_last_jaw_height_diff_m,
+            "repose_used": bool(repose_count),
+            "repose_count": repose_count,
+            "instruction": instruction,
+            "frames": len(ep_qpos),
+            "simulation_steps": step_counter,
+            "simulation_duration_s": round(step_counter * model.opt.timestep, 6),
+            "wall_duration_s": round(time.time() - t0, 6),
+            "phase_durations_s": phase_durations,
+            "tool_control": {
+                "site": EE_SITE,
+                "offset_local": H.tcp_offset.tolist(),
+            },
+            "quality": {
+                "max_grasp_translation_slip_m": max_slip_translation,
+                "max_grasp_rotation_slip_deg": max_slip_rotation_deg,
+                "grasp_translation_tolerance_m": SLIP_TRANSLATION_TOL,
+                "grasp_rotation_tolerance_deg": SLIP_ROTATION_TOL_DEG,
+                "max_gripper_actuator_force_n": max_gripper_force_n,
+                "task_gripper_kp": TASK_GRIPPER_KP,
+                "prelift_clearance_m": PRELIFT_CLEARANCE,
+                "carry_control_point_z_min": float(min(carry_z)),
+                "carry_control_point_z_max": float(max(carry_z)),
+                "carry_object_bottom_z_min": float(min(carry_bot)),
+                "carry_object_bottom_z_max": float(max(carry_bot)),
+                "final_object_top_z": float(obj_top_fin),
+            },
+            "final_object": {
+                "position": data.xpos[H.body_obj].tolist(),
+                "quaternion": data.qpos[H.obj_qadr + 3:H.obj_qadr + 7].tolist(),
+            },
+        }
+        ep_dir = write_episode_atomic(
+            out_dir, slot, imgs_f, imgs_w, ep_qpos, ep_act, instruction, metadata)
         done.add(slot)
+        occupied.add(slot)
         print(f"📁 ep_{slot}  {len(ep_qpos)} 帧  物体底 {min(carry_bot):.3f}~{max(carry_bot):.3f}  "
               f"{time.time()-t0:.1f}s  [{len(done)}/{args.target}]")
 
@@ -1012,7 +1741,7 @@ def collect(args):
     if viewer is not None:
         viewer.close()
     print(f"\n完成：新增 {len(done)-start_have} 条，共 {len(done)} 条，"
-          f"尝试 {attempts} 次 -> {os.path.abspath(args.out_dir)}")
+          f"尝试 {attempts} 次 -> {out_dir.resolve()}")
 
 
 def cmd_inspect():

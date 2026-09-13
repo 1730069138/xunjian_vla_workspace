@@ -1,5 +1,6 @@
 jun@jun:~/xunjian_vla_workspace$ tree
 .
+├── AGENTS.md
 ├── assets
 │   ├── meshes
 │   │   ├── base_link.STL
@@ -15,14 +16,23 @@ jun@jun:~/xunjian_vla_workspace$ tree
 │   │   ├── link8.STL
 │   │   └── link9.STL
 │   ├── objects
-│   │   └── flat_screwdriver
-│   │       ├── textured_coacd_0.stl
-│   │       ├── textured_coacd_1.stl
-│   │       ├── textured_coacd_2.stl
-│   │       ├── textured_coacd_3.stl
-│   │       ├── textured.mtl
-│   │       ├── textured.obj
-│   │       └── texture_map.png
+│   │   ├── flashlight
+│   │   │   ├── model.obj
+│   │   │   └── texture.png
+│   │   ├── flat_screwdriver
+│   │   │   ├── textured_coacd_0.stl
+│   │   │   ├── textured_coacd_1.stl
+│   │   │   ├── textured_coacd_2.stl
+│   │   │   ├── textured_coacd_3.stl
+│   │   │   ├── textured.mtl
+│   │   │   ├── textured.obj
+│   │   │   └── texture_map.png
+│   │   ├── multimeter
+│   │   │   ├── mm_case.png
+│   │   │   └── mm_panel.png
+│   │   └── screwdriver
+│   │       ├── model.obj
+│   │       └── texture.png
 │   └── textures
 │       ├── 0.png
 │       ├── 10.png
@@ -35,77 +45,101 @@ jun@jun:~/xunjian_vla_workspace$ tree
 │       ├── 7.png
 │       ├── 8.png
 │       └── 9.png
+├── CHANGELOG.md
 ├── common
 │   ├── __init__.py
+│   ├── obstacle_spec.py
 │   ├── __pycache__
 │   │   ├── __init__.cpython-310.pyc
 │   │   ├── __init__.cpython-311.pyc
+│   │   ├── obstacle_spec.cpython-310.pyc
 │   │   ├── robot_spec.cpython-310.pyc
 │   │   └── robot_spec.cpython-311.pyc
 │   └── robot_spec.py
+├── datasets.zip
 ├── docs
-│   ├── DummyX仿真全流程命令.txt
-│   ├── DummyX环境重建指南.txt
-│   └── 文件树.txt
+│   ├── archive
+│   │   └── auto_grasp_screwdriver（claude版）.zip
+│   ├── DummyX仿真全流程命令.txt
+│   ├── DummyX环境重建指南.txt
+│   ├── 复盘笔记.txt
+│   └── 文件树.txt
 ├── models
 │   ├── xunjian_arm.urdf
 │   └── xunjian_arm.xml
-├── recordings
-│   └── run_none_Case1_no_obs_no_apf_no_cont
-│       ├── fail
-│       │   ├── data_ep_010.npz
-│       │   └── ep_010_221603.mp4
-│       ├── progress.json
-│       └── success
-│           ├── data_ep_001.npz
-│           ├── data_ep_002.npz
-│           ├── data_ep_003.npz
-│           ├── data_ep_004.npz
-│           ├── data_ep_005.npz
-│           ├── data_ep_006.npz
-│           ├── data_ep_007.npz
-│           ├── data_ep_008.npz
-│           ├── data_ep_009.npz
-│           ├── ep_001_220303.mp4
-│           ├── ep_002_220324.mp4
-│           ├── ep_003_220344.mp4
-│           ├── ep_004_220406.mp4
-│           ├── ep_005_220429.mp4
-│           ├── ep_006_220450.mp4
-│           ├── ep_007_220511.mp4
-│           ├── ep_008_220537.mp4
-│           └── ep_009_220600.mp4
+├── README.md
 ├── requirements-dummyx.txt
 ├── scenes
+│   ├── tidy_A_all_annotations.xml
+│   ├── tidy_B_record_preview.xml
+│   ├── tidy_C_zones_only.xml
+│   ├── tidy_D_grasp_only.xml
+│   ├── tidy_E_collision_debug.xml
+│   ├── xunjian_arm_scene_tidy_v2.xml
+│   ├── xunjian_arm_scene_tidy.xml
 │   └── xunjian_arm_scene.xml
-├── tools
-│   ├── check_scene_paths.py
-│   └── setup_objects.sh
-└── scripts
-    ├── archive
-    │   ├── 复盘笔记.txt
-    │   ├── auto_grasp_screwdriver2.py
-    │   ├── auto_grasp_screwdriver3.py
-    │   ├── auto_grasp_screwdriver（claude版）.zip
-    │   ├── auto_grasp_screwdriver.py
-    │   ├── config.py
-    │   ├── convert_screwdriver_to_lerobot_oldenv copy.py
-    │   ├── convert_screwdriver_to_lerobot_oldenv.py
-    │   ├── data_collector（新任务单次固定位置）.py
-    │   ├── deploy_screwdriver_client2.py
-    │   └── train.py
-    ├── collect
-    │   ├── auto_grasp_screwdriver.py
-    │   └── collect_tidy_B.py
-    ├── convert
-    │   └── convert_xunjiandummyx_to_lerobot.py
-    ├── debug
-    │   ├── read_data.py
-    │   ├── test_policy_replay.py
-    │   └── visualize_camera.py
-    ├── deploy
-    │   └── deploy_screwdriver_client.py
-    ├── environment.yml
-    └── openpi_freeze.txt
+├── scripts
+│   ├── archive
+│   │   ├── auto_grasp_screwdriver2.py
+│   │   ├── auto_grasp_screwdriver3.py
+│   │   ├── auto_grasp_screwdriver.py
+│   │   ├── compute_norm_stats.py
+│   │   ├── config.py
+│   │   ├── convert_screwdriver_to_lerobot_oldenv copy.py
+│   │   ├── convert_screwdriver_to_lerobot_oldenv.py
+│   │   ├── data_collector（新任务单次固定位置）.py
+│   │   ├── deploy_screwdriver_client2.py
+│   │   └── train.py
+│   ├── collect
+│   │   ├── auto_grasp_screwdriver.py
+│   │   ├── collect_tidy_B.py
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       ├── auto_grasp_screwdriver.cpython-310.pyc
+│   │       ├── auto_grasp_screwdriver.cpython-311.pyc
+│   │       ├── collect_tidy_B.cpython-310.pyc
+│   │       ├── collect_tidy_B.cpython-311.pyc
+│   │       ├── __init__.cpython-310.pyc
+│   │       └── __init__.cpython-311.pyc
+│   ├── convert
+│   │   ├── convert_xunjiandummyx_to_lerobot.py
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       ├── convert_xunjiandummyx_to_lerobot.cpython-310.pyc
+│   │       ├── convert_xunjiandummyx_to_lerobot.cpython-311.pyc
+│   │       └── __init__.cpython-310.pyc
+│   ├── debug
+│   │   ├── diag_collision.py
+│   │   ├── diag_convexhull.py
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── diag_collision.cpython-310.pyc
+│   │   │   ├── diag_convexhull.cpython-310.pyc
+│   │   │   ├── __init__.cpython-310.pyc
+│   │   │   ├── test_policy_replay.cpython-310.pyc
+│   │   │   ├── test_policy_replay.cpython-311.pyc
+│   │   │   └── visualize_camera.cpython-310.pyc
+│   │   ├── read_data.py
+│   │   ├── test_policy_replay.py
+│   │   └── visualize_camera.py
+│   ├── deploy
+│   │   ├── deploy_screwdriver_client.py
+│   │   ├── __init__.py
+│   │   └── __pycache__
+│   │       ├── deploy_screwdriver_client.cpython-310.pyc
+│   │       ├── deploy_screwdriver_client.cpython-311.pyc
+│   │       └── __init__.cpython-310.pyc
+│   ├── environment.yml
+│   ├── __init__.py
+│   ├── openpi_freeze.txt
+│   └── __pycache__
+│       ├── __init__.cpython-310.pyc
+│       └── __init__.cpython-311.pyc
+└── tools
+    ├── check_scene_paths.py
+    ├── __pycache__
+    │   └── check_scene_paths.cpython-310.pyc
+    └── setup_objects.sh
 
-15 directories, 83 files
+27 directories, 113 files
+
